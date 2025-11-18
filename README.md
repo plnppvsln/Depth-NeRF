@@ -38,48 +38,7 @@ The code-base has additional support for:
 ## ScanNet dataset support
 The repo now supports training a NeRF model on a scene from the ScanNet dataset. I personally found setting up the ScanNet dataset to be a bit tricky. Please find some instructions/notes in [ScanNet.md](ScanNet.md).
 
+## Citation
 
-## TODO:
-* Voxel pruning during training and/or inference
-* Accelerated ray tracing, early ray termination
-
-
-# Citation
-Kudos to [Thomas Müller](https://tom94.net/) and the NVIDIA team for this amazing work, that will greatly help accelerate Neural Graphics research:
-```
-@article{mueller2022instant,
-    title = {Instant Neural Graphics Primitives with a Multiresolution Hash Encoding},
-    author = {Thomas M\"uller and Alex Evans and Christoph Schied and Alexander Keller},
-    journal = {arXiv:2201.05989},
-    year = {2022},
-    month = jan
-}
-```
-
-Also, thanks to [Yen-Chen Lin](https://yenchenlin.me/) for the super-useful [NeRF-pytorch](https://github.com/yenchenlin/nerf-pytorch):
-```
-@misc{lin2020nerfpytorch,
-  title={NeRF-pytorch},
-  author={Yen-Chen, Lin},
-  publisher = {GitHub},
-  journal = {GitHub repository},
-  howpublished={\url{https://github.com/yenchenlin/nerf-pytorch/}},
-  year={2020}
-}
-```
-
-If you find this project useful, please consider to cite:
-```
-@misc{bhalgat2022hashnerfpytorch,
-  title={HashNeRF-pytorch},
-  author={Yash Bhalgat},
-  publisher = {GitHub},
-  journal = {GitHub repository},
-  howpublished={\url{https://github.com/yashbhalgat/HashNeRF-pytorch/}},
-  year={2022}
-}
-```
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=yashbhalgat/HashNeRF-pytorch&type=Date)](https://star-history.com/#yashbhalgat/HashNeRF-pytorch&Date)
+Based on the original work by [Yash Sanjay Bhalgat](https://github.com/yashbhalgat/HashNeRF-pytorch/)
+License: MIT
