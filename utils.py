@@ -37,7 +37,7 @@ def get_bbox3d_for_blenderobj(camera_transforms, H, W, near=2.0, far=6.0):
     points = []
 
     for frame in camera_transforms["frames"]:
-        c2w = torch.FloatTensor(frame["transform_matrix"])
+        c2w = torch.FloatTensor(frame["transform_matrix"]).to('cuda:0')
         rays_o, rays_d = get_rays(directions, c2w)
         
         def find_min_max(pt):
