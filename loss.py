@@ -24,7 +24,7 @@ def total_variation_loss(embeddings, min_resolution, max_resolution, level, log2
     # Sample cuboid
     min_vertex = torch.randint(0, resolution-cube_size, (3,))
     idx = min_vertex + torch.stack([torch.arange(cube_size+1) for _ in range(3)], dim=-1)
-    cube_indices = torch.stack(torch.meshgrid(idx[:,0], idx[:,1], idx[:,2]), dim=-1)
+    cube_indices = torch.stack(torch.meshgrid(idx[:,0], idx[:,1], idx[:,2], indexing='ij'), dim=-1)
 
     hashed_indices = hash(cube_indices, log2_hashmap_size)
     cube_embeddings = embeddings(hashed_indices)
