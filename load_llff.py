@@ -21,42 +21,50 @@ def _minify(basedir, factors=[], resolutions=[]):
     
     from shutil import copy
     from subprocess import check_output
+    from PIL import Image
     
-    imgdir = os.path.join(basedir, 'images')
-    imgs = [os.path.join(imgdir, f) for f in sorted(os.listdir(imgdir))]
-    imgs = [f for f in imgs if any([f.endswith(ex) for ex in ['JPG', 'jpg', 'png', 'jpeg', 'PNG']])]
-    imgdir_orig = imgdir
+    imgdir_orig = os.path.join(basedir, 'images')
+    imgs = [
+        f for f in sorted(os.listdir(imgdir_orig))
+        if f.lower().endswith(('jpg', 'jpeg', 'png'))
+    ]
     
-    wd = os.getcwd()
+    # wd = os.getcwd()
 
     for r in factors + resolutions:
         if isinstance(r, int):
-            name = 'images_{}'.format(r)
-            resizearg = '{}%'.format(100./r)
+            name = f'images_{r}'
+            factor = r
         else:
-            name = 'images_{}x{}'.format(r[1], r[0])
-            resizearg = '{}x{}'.format(r[1], r[0])
-        imgdir = os.path.join(basedir, name)
-        if os.path.exists(imgdir):
+            name = f'images_{r[1]}x{r[0]}'
+            height, width = r
+
+        outdir = os.path.join(basedir, name)
+        if os.path.exists(outdir):
             continue
             
         print('Minifying', r, basedir)
         
-        os.makedirs(imgdir)
-        check_output('cp {}/* {}'.format(imgdir_orig, imgdir), shell=True)
-        
-        ext = imgs[0].split('.')[-1]
-        args = ' '.join(['mogrify', '-resize', resizearg, '-format', 'png', '*.{}'.format(ext)])
-        print(args)
-        os.chdir(imgdir)
-        check_output(args, shell=True)
-        os.chdir(wd)
-        
-        if ext != 'png':
-            check_output('rm {}/*.{}'.format(imgdir, ext), shell=True)
-            print('Removed duplicates')
-        print('Done')
-            
+        os.makedirs(outdir)
+        # check_output('cp {}/* {}'.format(imgdir_orig, imgdir), shell=True)
+        for imgname in imgs:
+            inpath = os.path.join(imgdir_orig, imgname)
+            outname = os.path.splitext(imgname)[0] + ".png"
+            outpath = os.path.join(outdir, outname)
+
+            img = Image.open(inpath)
+
+            if isinstance(r, int):  # factor mode
+                new_w = int(img.width / r)
+                new_h = int(img.height / r)
+            else:                    # resolution mode
+                new_h = height
+                new_w = width
+
+            img = img.resize((new_w, new_h), Image.LANCZOS)
+            img.save(outpath, "PNG")
+
+        print("Done")
         
         
         
@@ -108,7 +116,7 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
     
     def imread(f):
         if f.endswith('png'):
-            return imageio.imread(f, ignoregamma=True)
+            return imageio.imread(f, pilmode="RGB")
         else:
             return imageio.imread(f)
         
