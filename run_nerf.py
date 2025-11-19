@@ -166,15 +166,16 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
 
     t = time.time()
     for i, c2w in enumerate(tqdm(render_poses)):
-        print(i, time.time() - t)
-        t = time.time()
         rgb, depth, acc, _ = render(H, W, K, chunk=chunk, c2w=c2w[:3,:4], **render_kwargs)
         rgbs.append(rgb.cpu().numpy())
         # normalize depth to [0,1]
         depth = (depth - near) / (far - near)
         depths.append(depth.cpu().numpy())
         if i==0:
-            print(rgb.shape, depth.shape)
+            tqdm.write(f"[Render] rgb shape: {rgb.shape}, depth shape: {depth.shape}")
+
+        tqdm.write(f"[Render] Iter: {i} Time: {time.time() - t:.4f}")
+        t = time.time()
 
         if gt_imgs is not None and render_factor==0:
             try:
@@ -182,7 +183,7 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
             except:
                 gt_img = gt_imgs[i]
             p = -10. * np.log10(np.mean(np.square(rgb.cpu().numpy() - gt_img)))
-            print(p)
+            tqdm.write(f"{p}")
             psnrs.append(p)
 
         if savedir is not None:
@@ -774,7 +775,7 @@ def train():
 
     # Short circuit if only rendering out from trained model
     if args.render_only:
-        print('RENDER ONLY')
+        tqdm.write(f"[RENDER ONLY]")
         with torch.no_grad():
             if args.render_test:
                 # render_test switches to test poses
@@ -785,10 +786,10 @@ def train():
 
             testsavedir = os.path.join(basedir, expname, 'renderonly_{}_{:06d}'.format('test' if args.render_test else 'path', start))
             os.makedirs(testsavedir, exist_ok=True)
-            print('test poses shape', render_poses.shape)
+            tqdm.write(f"[RENDER ONLY] Test poses shape: {render_poses.shape}")
 
             rgbs, _ = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor)
-            print('Done rendering', testsavedir)
+            tqdm.write(f"[RENDER ONLY] Done rendering {testsavedir}")
             imageio.mimwrite(os.path.join(testsavedir, 'video.mp4'), to8b(rgbs), fps=30, quality=8)
 
             return
@@ -948,13 +949,13 @@ def train():
                     'network_fine_state_dict': render_kwargs_train['network_fine'].state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                 }, path)
-            print('Saved checkpoints at', path)
+            tqdm.write(f"[CHECKPOINT] Saved checkpoints at {path}")
 
         if i%args.i_video==0 and i > 0:
             # Turn on testing mode
             with torch.no_grad():
                 rgbs, disps = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, render_factor=args.render_factor)
-            print('Done, saving', rgbs.shape, disps.shape)
+            tqdm.write(f"[VIDEO] Done, saving {rgbs.shape, disps.shape}")
             moviebase = os.path.join(basedir, expname, '{}_spiral_{:06d}_'.format(expname, i))
             imageio.mimwrite(moviebase + 'rgb.mp4', to8b(rgbs), fps=30, quality=8)
             imageio.mimwrite(moviebase + 'disp.mp4', to8b(disps / np.max(disps)), fps=30, quality=8)
@@ -969,15 +970,15 @@ def train():
         if i%args.i_testset==0 and i > 0:
             testsavedir = os.path.join(basedir, expname, 'testset_{:06d}'.format(i))
             os.makedirs(testsavedir, exist_ok=True)
-            print('test poses shape', poses[i_test].shape)
+            tqdm.write(f"[IMAGES] test poses shape {poses[i_test].shape}")
             with torch.no_grad():
                 render_path(torch.Tensor(poses[i_test]).to(device), hwf, K, args.chunk, render_kwargs_test, gt_imgs=images[i_test], savedir=testsavedir, render_factor=args.render_factor)
-            print('Saved test set')
+            tqdm.write(f"[IMAGES] Saved test set")
 
 
 
         if i%args.i_print==0:
-            tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()}")
+            tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item():.5f}  PSNR: {psnr.item():.4f}")
             loss_list.append(loss.item())
             psnr_list.append(psnr.item())
             time_list.append(t)
