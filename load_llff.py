@@ -249,7 +249,7 @@ def spherify_poses(poses, bds):
     return poses_reset, new_poses, bds
     
 
-def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=False, path_zflat=False):
+def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=False, path_zflat=False, no_ndc=False):
     
 
     poses, bds, imgs = _load_data(basedir, factor=factor) # factor=8 downsamples original imgs by 8x
@@ -322,9 +322,19 @@ def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=Fal
     images = images.astype(np.float32)
     poses = poses.astype(np.float32)
 
-    bounding_box = get_bbox3d_for_llff(poses[:,:3,:4], poses[0,:3,-1], near=0.0, far=1.0)
+    print('DEFINING BOUNDS')
+    if no_ndc:
+        near = np.ndarray.min(bds) * .9
+        far = np.ndarray.max(bds) * 1.
+    else:
+        near = 0.
+        far = 1.
+        
+    print('NEAR FAR', near, far)
 
-    return images, poses, bds, render_poses, i_test, bounding_box
+    bounding_box = get_bbox3d_for_llff(poses[:,:3,:4], poses[0,:3,-1], near=near, far=far, no_ndc=no_ndc)
+
+    return images, poses, render_poses, i_test, bounding_box, near, far
 
 
 

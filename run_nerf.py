@@ -634,9 +634,10 @@ def train():
     # Load data
     K = None
     if args.dataset_type == 'llff':
-        images, poses, bds, render_poses, i_test, bounding_box = load_llff_data(args.datadir, args.factor,
-                                                                  recenter=True, bd_factor=.75,
-                                                                  spherify=args.spherify)
+        images, poses, render_poses, i_test, bounding_box, near, far = load_llff_data(args.datadir, args.factor,
+                                                                                      recenter=True, bd_factor=.75,
+                                                                                      spherify=args.spherify,
+                                                                                      no_ndc=args.no_ndc)
         hwf = poses[0,:3,-1]
         poses = poses[:,:3,:4]
         args.bounding_box = bounding_box
@@ -652,16 +653,6 @@ def train():
         i_val = i_test
         i_train = np.array([i for i in np.arange(int(images.shape[0])) if
                         (i not in i_test and i not in i_val)])
-
-        print('DEFINING BOUNDS')
-        if args.no_ndc:
-            near = np.ndarray.min(bds) * .9
-            far = np.ndarray.max(bds) * 1.
-
-        else:
-            near = 0.
-            far = 1.
-        print('NEAR FAR', near, far)
 
     elif args.dataset_type == 'blender':
         images, poses, render_poses, hwf, i_split, bounding_box = load_blender_data(args.datadir, args.half_res, args.testskip)
@@ -845,7 +836,7 @@ def train():
 
             i_batch += N_rand
             if i_batch >= rays_rgb.shape[0]:
-                print("Shuffle data after an epoch!")
+                tqdm.write(f"Shuffle data after an epoch!")
                 rand_idx = torch.randperm(rays_rgb.shape[0])
                 rays_rgb = rays_rgb[rand_idx]
                 i_batch = 0
