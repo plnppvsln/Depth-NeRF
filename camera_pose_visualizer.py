@@ -10,7 +10,7 @@ import pdb
 class CameraPoseVisualizer:
     def __init__(self, xlim, ylim, zlim):
         self.fig = plt.figure(figsize=(18, 7))
-        self.ax = self.fig.gca(projection='3d')
+        self.ax = plt.axes(projection='3d')
         self.ax.set_aspect("auto")
         self.ax.set_xlim(xlim)
         self.ax.set_ylim(ylim)
@@ -55,7 +55,7 @@ class CameraPoseVisualizer:
 
 if __name__ == '__main__':
     poses = []
-    with open(os.path.join('data/nerf_synthetic/chair/', 'transforms_train.json'), 'r') as fp:
+    with open(os.path.join('data/nerf_custom/fox/', 'transforms.json'), 'r') as fp:
         meta = json.load(fp)
         for frame in meta['frames']:
             poses.append(np.array(frame['transform_matrix']))

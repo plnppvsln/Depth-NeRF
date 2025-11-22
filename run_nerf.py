@@ -25,6 +25,7 @@ from load_deepvoxels import load_dv_data
 from load_blender import load_blender_data
 from load_scannet import load_scannet_data
 from load_LINEMOD import load_LINEMOD_data
+from load_custom import load_custom_data
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -572,7 +573,7 @@ def config_parser():
 
     # dataset options
     parser.add_argument("--dataset_type", type=str, default='llff',
-                        help='options: llff / blender / deepvoxels')
+                        help='options: llff / blender / deepvoxels / custom')
     parser.add_argument("--testskip", type=int, default=8,
                         help='will load 1/N images from test/val sets, useful for large datasets like deepvoxels')
 
@@ -700,6 +701,16 @@ def train():
         hemi_R = np.mean(np.linalg.norm(poses[:,:3,-1], axis=-1))
         near = hemi_R-1.
         far = hemi_R+1.
+    elif args.dataset_type == 'custom':
+        images, poses, render_poses, hwf, K, i_split, bounding_box = load_custom_data(args.datadir, 
+                                                                                    half_res=args.half_res, 
+                                                                                    testskip=args.testskip)
+        args.bounding_box = bounding_box
+        print('Loaded custom dataset', images.shape, poses.shape, render_poses.shape, hwf, args.datadir)
+        i_train, i_val, i_test = i_split
+
+        near = 0.1
+        far = 10.0
 
     else:
         print('Unknown dataset type', args.dataset_type, 'exiting')
