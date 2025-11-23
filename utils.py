@@ -120,6 +120,76 @@ def get_bbox3d_for_llff(poses, hwf, near=0.0, far=1.0, no_ndc=False):
     return (torch.tensor(min_bound)-torch.tensor([0.1,0.1,0.0001]), torch.tensor(max_bound)+torch.tensor([0.1,0.1,0.0001]))
 
 
+def get_bbox3d_for_nerf_style(meta, H, W, near, far, device='cuda:0'):
+    """
+    Compute a 3D bounding box for custom datasets similar to Blender/LLFF scenes.
+    Uses near/far for ray sampling and applies aabb_scale correctly.
+    """
+
+    # focal length
+    focal = meta.get("fl_x", None)
+    if focal is None:
+        camera_angle_x = float(meta["camera_angle_x"])
+        focal = 0.5 * W / np.tan(0.5 * camera_angle_x)
+
+    # ray directions in camera coordinates
+    directions = get_ray_directions(H, W, focal)  # (H,W,3)
+
+    min_bound = [100.0, 100.0, 100.0]
+    max_bound = [-100.0, -100.0, -100.0]
+
+    frames = meta["frames"]
+
+    def update_bounds(pt):
+        for j in range(3):
+            min_bound[j] = min(min_bound[j], float(pt[j]))
+            max_bound[j] = max(max_bound[j], float(pt[j]))
+
+    for frame in frames:
+        c2w = torch.tensor(frame["transform_matrix"], dtype=torch.float32).to(device)
+
+        rays_o, rays_d = get_rays(directions, c2w)  # both (H*W,3)
+
+        # Use only 4 corner rays for efficiency
+        idxs = [0, W-1, H*W-W, H*W-1]
+
+        for idx in idxs:
+            p_near = rays_o[idx] + near * rays_d[idx]
+            p_far  = rays_o[idx] + far  * rays_d[idx]
+            update_bounds(p_near)
+            update_bounds(p_far)
+
+    # Apply padding
+    min_bound = torch.tensor(min_bound) - torch.tensor([0.1, 0.1, 0.1])
+    max_bound = torch.tensor(max_bound) + torch.tensor([0.1, 0.1, 0.1])
+
+    # Apply aabb_scale like instant-ngp:
+    # final AABB is scaled from [-1,1] * scale
+    aabb_scale = meta.get("aabb_scale", 1)
+    scale = float(aabb_scale)
+
+    center = (min_bound + max_bound) * 0.5
+    size   = (max_bound - min_bound) * 0.5 * scale
+
+    min_bound_scaled = center - size
+    max_bound_scaled = center + size
+
+    return min_bound_scaled, max_bound_scaled
+
+
+def compute_near_far_from_poses(poses):
+    centers = np.array([p[:3, 3] for p in poses])
+    cmean = centers.mean(axis=0)
+    dists = np.linalg.norm(centers - cmean, axis=1)
+
+    min_d = dists.min()
+    max_d = dists.max()
+
+    near = max(0.05, min_d * 0.1)
+    far  = max_d * 2.0
+    return near, far
+
+
 def get_voxel_vertices(xyz, bounding_box, resolution, log2_hashmap_size):
     '''
     xyz: 3D coordinates of samples. B x 3
