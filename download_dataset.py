@@ -39,9 +39,29 @@ def download_and_extract(dataset_name, save_dir="data"):
         zip_ref.extractall(os.path.join(save_dir))
     print(f"Unzipped to {os.path.join(save_dir)}")
 
+def list_datasets():
+    """Print available datasets"""
+    print("Available datasets:")
+    for i, dataset_name in enumerate(DATASETS.keys(), 1):
+        print(f"  {i}. {dataset_name}")
+    print(f"\nTotal: {len(DATASETS)} datasets")
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Download NeRF datasets")
-    parser.add_argument("--dataset", type=str, required=True, help="Dataset name (e.g. shaving_set, lego)")
-    parser.add_argument("--save_dir", type=str, default="data", help="Directory to save datasets")
+    parser = argparse.ArgumentParser(
+        description="Download NeRF datasets",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"Available datasets: {', '.join(DATASETS.keys())}"
+    )
+    parser.add_argument("--dataset", type=str, help="Dataset name to download (e.g. shaving_set, lego)")
+    parser.add_argument("--save_dir", type=str, default="data", help="Directory to save datasets (by default is ./data and should be it)")
+    parser.add_argument("--list", action="store_true", help="List all available datasets")
     args = parser.parse_args()
-    download_and_extract(args.dataset, args.save_dir)
+    
+    if args.list:
+        list_datasets()
+    elif args.dataset:
+        download_and_extract(args.dataset, args.save_dir)
+    else:
+        parser.print_help()
+        print("\n" + "="*50)
+        list_datasets()
