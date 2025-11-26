@@ -105,6 +105,16 @@ You can specify the matching algorithm using the `--match_type` parameter:
 python imgs2poses.py --match_type sequential_matcher <scene_directory>
 ```
 
+### Removing Unregistered Images
+
+By default, all images are kept in the `images/` directory, even if COLMAP couldn't register them. However, if you want to automatically remove unregistered images to avoid mismatches between images and poses, you can use the `--remove-unregistered` flag:
+
+```bash
+python imgs2poses.py --remove-unregistered <scene_directory>
+```
+
+This will delete any images from the `images/` directory that are not listed in `view_imgs.txt` (i.e., images that COLMAP couldn't register). This is useful to prevent errors when loading data, as the number of images will match the number of poses in `poses_bounds.npy`.
+
 ### Output
 
 After running COLMAP, the following files will be created in your scene directory:
@@ -116,5 +126,8 @@ After running COLMAP, the following files will be created in your scene director
   - `points3D.bin`: 3D point cloud
 - `poses_bounds.npy`: Processed poses in NeRF format
 - `colmap_output.txt`: COLMAP processing logs
+- `view_imgs.txt`: List of successfully registered images
 
 The script will automatically skip COLMAP if the sparse reconstruction already exists.
+
+**Note:** COLMAP may not be able to register all images in your dataset (e.g., due to insufficient features, poor image quality, or lack of overlap). The pose processing pipeline has been updated to handle this gracefully by using only the images that were successfully registered by COLMAP. The `view_imgs.txt` file contains the list of images that were successfully processed, and the `poses_bounds.npy` file will only contain poses for these registered images. This prevents errors when some images are missing from the COLMAP reconstruction.

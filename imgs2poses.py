@@ -6,6 +6,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--match_type', type=str, 
 					default='exhaustive_matcher', help='type of matcher used.  Valid options: \
 					exhaustive_matcher sequential_matcher.  Other matchers not supported at this time')
+parser.add_argument('--remove-unregistered', action='store_true',
+					help='remove images that were not registered by COLMAP (by default, all images are kept)')
 parser.add_argument('scenedir', type=str,
                     help='input scene directory')
 args = parser.parse_args()
@@ -15,4 +17,4 @@ if args.match_type != 'exhaustive_matcher' and args.match_type != 'sequential_ma
 	sys.exit()
 
 if __name__=='__main__':
-    gen_poses(args.scenedir, args.match_type)
+    gen_poses(args.scenedir, args.match_type, remove_unregistered=args.remove_unregistered)
