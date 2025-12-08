@@ -3,34 +3,35 @@ from datetime import datetime
 import numpy as np
 import imageio
 import json
-import pdb
 import random
 import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import Categorical
 from tqdm import tqdm, trange
 import pickle
 
 import matplotlib.pyplot as plt
 
 from run_nerf_helpers import *
-from optimizer import MultiOptimizer
-from radam import RAdam
-from loss import sigma_sparsity_loss, total_variation_loss
+from optimizer import MultiOptimizer # Возможно вообще не нужно
+from radam import RAdam # TODO заменить на torch.optim.RAdam
+from loss import sigma_sparsity_loss, total_variation_loss, SigmaLoss, depth_loss
 
-from load_llff import load_llff_data
-from load_deepvoxels import load_dv_data
+from data import RayDataset
+from torch.utils.data import DataLoader
+
+from load_llff import load_llff_data, load_colmap_depth, load_colmap_llff
+from load_deepvoxels import load_dv_data # Возможно вообще не нужно
 from load_blender import load_blender_data
-from load_scannet import load_scannet_data
-from load_LINEMOD import load_LINEMOD_data
+from load_scannet import load_scannet_data # Возможно вообще не нужно
+from load_LINEMOD import load_LINEMOD_data # Возможно вообще не нужно
 from load_nerf_style import load_nerf_style
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 np.random.seed(0)
-DEBUG = False
+DEBUG = True
 
 
 def batchify(fn, chunk):
@@ -78,7 +79,7 @@ def batchify_rays(rays_flat, chunk=1024*32, **kwargs):
 
 def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
                   near=0., far=1.,
-                  use_viewdirs=False, c2w_staticcam=None,
+                  use_viewdirs=False, c2w_staticcam=None, depths=None,
                   **kwargs):
     """Render rays
     Args:
@@ -96,9 +97,11 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
       use_viewdirs: bool. If True, use viewing direction of a point in space in model.
       c2w_staticcam: array of shape [3, 4]. If not None, use this transformation matrix for
        camera while using other c2w argument for viewing directions.
+      depths: #TODO 
     Returns:
       rgb_map: [batch_size, 3]. Predicted RGB values for rays.
       disp_map: [batch_size]. Disparity map. Inverse of depth.
+      depth_map: [batch_size]. Depth map.
       acc_map: [batch_size]. Accumulated opacity (alpha) along a ray.
       extras: dict with everything returned by render_rays().
     """
@@ -129,6 +132,8 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
 
     near, far = near * torch.ones_like(rays_d[...,:1]), far * torch.ones_like(rays_d[...,:1])
     rays = torch.cat([rays_o, rays_d, near, far], -1)
+    if depths is not None:
+        rays = torch.cat([rays, depths.reshape(-1,1)], -1)
     if use_viewdirs:
         rays = torch.cat([rays, viewdirs], -1)
 
@@ -138,7 +143,7 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
         k_sh = list(sh[:-1]) + list(all_ret[k].shape[1:])
         all_ret[k] = torch.reshape(all_ret[k], k_sh)
 
-    k_extract = ['rgb_map', 'depth_map', 'acc_map']
+    k_extract = ['rgb_map', 'disp_map', 'depth_map', 'acc_map']
     ret_list = [all_ret[k] for k in k_extract]
     ret_dict = {k : all_ret[k] for k in all_ret if k not in k_extract}
     return ret_list + [ret_dict]
@@ -163,15 +168,17 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
         
     rgbs = []
     depths = []
+    disps = []
     psnrs = []
 
     t = time.time()
     for i, c2w in enumerate(tqdm(render_poses)):
-        rgb, depth, acc, _ = render(H, W, K, chunk=chunk, c2w=c2w[:3,:4], **render_kwargs)
+        rgb, disp, depth, acc, _ = render(H, W, K, chunk=chunk, c2w=c2w[:3,:4], **render_kwargs)
         rgbs.append(rgb.cpu().numpy())
         # normalize depth to [0,1]
-        depth = (depth - near) / (far - near)
-        depths.append(depth.cpu().numpy())
+        depth_norm = (depth - near) / (far - near)
+        depths.append(depth_norm.cpu().numpy())
+        disps.append(disp.cpu().numpy())
         if i==0:
             tqdm.write(f"[Render] rgb shape: {rgb.shape}, depth shape: {depth.shape}")
 
@@ -188,6 +195,10 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
             psnrs.append(p)
 
         if savedir is not None:
+
+            # Можно разные варианты сохранения изображений добавить
+            # Здесь: первый одной картинкой сохраняет, второй - двумя разными
+
             # save rgb and depth as a figure
             fig = plt.figure(figsize=(25,15))
             ax = fig.add_subplot(1, 2, 1)
@@ -203,16 +214,40 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
             plt.close(fig)
             # imageio.imwrite(filename, rgb8)
 
+            # rgb8 = to8b(rgbs[-1])
+            # rgb8[np.isnan(rgb8)] = 0
+            # filename = os.path.join(savedir, '{:03d}.png'.format(i))
+            # imageio.imwrite(filename, rgb8)
+            # depth = depth.cpu().numpy()
+            # tqdm.write("max depth: {np.nanmax(depth)}")
+            # depth_valid = depth[~np.isnan(depth)]
+            # if len(depth_valid) > 0:
+            #     depth_min = np.nanmin(depth)
+            #     depth_max = np.nanmax(depth)
+            #     if depth_max > depth_min:
+            #         depth_normalized = (depth - near) / (far - near)
+            #     else:
+            #         depth_normalized = np.zeros_like(depth)
+            #     depth_normalized = np.clip(depth_normalized, 0, 1)
+            #     depth_normalized[np.isnan(depth_normalized)] = 0
+            #     depth8 = (255 * depth_normalized).astype(np.uint8)
+            # else:
+            #     depth8 = np.zeros_like(depth, dtype=np.uint8)
+            # imageio.imwrite(os.path.join(savedir, '{:03d}_depth.png'.format(i)), depth8)
+            # np.savez(os.path.join(savedir, '{:03d}.npz'.format(i)), rgb=rgb.cpu().numpy(), disp=disp.cpu().numpy(), acc=acc.cpu().numpy(), depth=depth)
+
+
 
     rgbs = np.stack(rgbs, 0)
-    depths = np.stack(depths, 0)
+    # depths = np.stack(depths, 0)
+    disps = np.stack(disps, 0)
     if gt_imgs is not None and render_factor==0:
         avg_psnr = sum(psnrs)/len(psnrs)
         print("Avg PSNR over Test set: ", avg_psnr)
         with open(os.path.join(savedir, "test_psnrs_avg{:0.2f}.pkl".format(avg_psnr)), "wb") as fp:
             pickle.dump(psnrs, fp)
 
-    return rgbs, depths
+    return rgbs, disps#, depths
 
 
 def create_nerf(args):
@@ -332,60 +367,6 @@ def create_nerf(args):
     return render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer
 
 
-def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=False):
-    """Transforms model's predictions to semantically meaningful values.
-    Args:
-        raw: [num_rays, num_samples along ray, 4]. Prediction from model.
-        z_vals: [num_rays, num_samples along ray]. Integration time.
-        rays_d: [num_rays, 3]. Direction of each ray.
-    Returns:
-        rgb_map: [num_rays, 3]. Estimated RGB color of a ray.
-        disp_map: [num_rays]. Disparity map. Inverse of depth map.
-        acc_map: [num_rays]. Sum of weights along each ray.
-        weights: [num_rays, num_samples]. Weights assigned to each sampled color.
-        depth_map: [num_rays]. Estimated distance to object.
-    """
-    raw2alpha = lambda raw, dists, act_fn=F.relu: 1.-torch.exp(-act_fn(raw)*dists)
-
-    dists = z_vals[...,1:] - z_vals[...,:-1]
-    dists = torch.cat([dists, torch.tensor([1e10]).expand(dists[...,:1].shape)], -1)  # [N_rays, N_samples]
-
-    dists = dists * torch.norm(rays_d[...,None,:], dim=-1)
-
-    rgb = torch.sigmoid(raw[...,:3])  # [N_rays, N_samples, 3]
-    noise = 0.
-    if raw_noise_std > 0.:
-        noise = torch.randn(raw[...,3].shape) * raw_noise_std
-
-        # Overwrite randomly sampled data if pytest
-        if pytest:
-            np.random.seed(0)
-            noise = np.random.rand(*list(raw[...,3].shape)) * raw_noise_std
-            noise = torch.Tensor(noise)
-
-    # sigma_loss = sigma_sparsity_loss(raw[...,3])
-    alpha = raw2alpha(raw[...,3] + noise, dists)  # [N_rays, N_samples]
-    # weights = alpha * tf.math.cumprod(1.-alpha + 1e-10, -1, exclusive=True)
-    weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)), 1.-alpha + 1e-10], -1), -1)[:, :-1]
-    rgb_map = torch.sum(weights[...,None] * rgb, -2)  # [N_rays, 3]
-
-    depth_map = torch.sum(weights * z_vals, -1) / torch.sum(weights, -1)
-    disp_map = 1./torch.max(1e-10 * torch.ones_like(depth_map), depth_map)
-    acc_map = torch.sum(weights, -1)
-
-    if white_bkgd:
-        rgb_map = rgb_map + (1.-acc_map[...,None])
-
-    # Calculate weights sparsity loss
-    try:
-        entropy = Categorical(probs = torch.cat([weights, 1.0-weights.sum(-1, keepdim=True)+1e-6], dim=-1)).entropy()
-    except:
-        pdb.set_trace()
-    sparsity_loss = entropy
-
-    return rgb_map, disp_map, acc_map, weights, depth_map, sparsity_loss
-
-
 def render_rays(ray_batch,
                 network_fn,
                 network_query_fn,
@@ -399,7 +380,8 @@ def render_rays(ray_batch,
                 white_bkgd=False,
                 raw_noise_std=0.,
                 verbose=False,
-                pytest=False):
+                pytest=False,
+                sigma_loss=None):
     """Volumetric rendering.
     Args:
       ray_batch: array of shape [batch_size, ...]. All information necessary
@@ -450,7 +432,7 @@ def render_rays(ray_batch,
         upper = torch.cat([mids, z_vals[...,-1:]], -1)
         lower = torch.cat([z_vals[...,:1], mids], -1)
         # stratified samples in those intervals
-        t_rand = torch.rand(z_vals.shape)
+        t_rand = torch.rand(z_vals.shape) # .to(device) ?
 
         # Pytest, overwrite u with numpy's fixed random numbers
         if pytest:
@@ -463,11 +445,11 @@ def render_rays(ray_batch,
     pts = rays_o[...,None,:] + rays_d[...,None,:] * z_vals[...,:,None] # [N_rays, N_samples, 3]
 
     raw = network_query_fn(pts, viewdirs, network_fn)
-    rgb_map, disp_map, acc_map, weights, depth_map, sparsity_loss = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
+    rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
 
     if N_importance > 0:
 
-        rgb_map_0, depth_map_0, acc_map_0, sparsity_loss_0 = rgb_map, depth_map, acc_map, sparsity_loss
+        rgb_map_0, disp_map_0, depth_map_0, acc_map_0 = rgb_map, disp_map, depth_map, acc_map
 
         z_vals_mid = .5 * (z_vals[...,1:] + z_vals[...,:-1])
         z_samples = sample_pdf(z_vals_mid, weights[...,1:-1], N_importance, det=(perturb==0.), pytest=pytest)
@@ -477,20 +459,26 @@ def render_rays(ray_batch,
         pts = rays_o[...,None,:] + rays_d[...,None,:] * z_vals[...,:,None] # [N_rays, N_samples + N_importance, 3]
 
         run_fn = network_fn if network_fine is None else network_fine
-#         raw = run_network(pts, fn=run_fn)
+        # raw = run_network(pts, fn=run_fn)
         raw = network_query_fn(pts, viewdirs, run_fn)
 
-        rgb_map, disp_map, acc_map, weights, depth_map, sparsity_loss = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
+        rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
 
-    ret = {'rgb_map' : rgb_map, 'depth_map' : depth_map, 'acc_map' : acc_map, 'sparsity_loss': sparsity_loss}
+    ret = {'rgb_map' : rgb_map, 'disp_map' : disp_map, 'depth_map' : depth_map, 'acc_map' : acc_map}
     if retraw:
         ret['raw'] = raw
     if N_importance > 0:
         ret['rgb0'] = rgb_map_0
+        ret['disp0'] = disp_map_0
         ret['depth0'] = depth_map_0
         ret['acc0'] = acc_map_0
-        ret['sparsity_loss0'] = sparsity_loss_0
+        # ret['sparsity_loss0'] = sparsity_loss_0
         ret['z_std'] = torch.std(z_samples, dim=-1, unbiased=False)  # [N_rays]
+
+    if sigma_loss is not None and ray_batch.shape[-1] > 11:
+        depths = ray_batch[:,8]
+        ret['sigma_loss'] = sigma_loss.calculate_loss(rays_o, rays_d, viewdirs, near, far, depths, network_query_fn, network_fine)
+
 
     for k in ret:
         if (torch.isnan(ret[k]).any() or torch.isinf(ret[k]).any()) and DEBUG:
@@ -624,6 +612,40 @@ def config_parser():
     parser.add_argument("--tv-loss-weight", type=float, default=1e-6,
                         help='learning rate')
 
+    # new experiment by kangle
+    parser.add_argument("--N_iters", type=int, default=30_000, 
+                        help='number of iters')
+    parser.add_argument("--alpha_model_path", type=str, default=None,
+                        help='predefined alpha model')
+    parser.add_argument("--no_coarse", action='store_true',
+                        help="Remove coarse network.")
+    parser.add_argument("--train_scene", nargs='+', type=int,
+                        help='id of scenes used to train')
+    parser.add_argument("--test_scene", nargs='+', type=int,
+                        help='id of scenes used to test')
+    parser.add_argument("--colmap_depth", action='store_true',
+                        help="Use depth supervision by colmap.")
+    parser.add_argument("--depth_loss", action='store_true',
+                        help="Use depth supervision by colmap - depth loss.")
+    parser.add_argument("--using_sparse", action='store_true',
+                        help="When enabled, all images are used for training (no test set).")
+    parser.add_argument("--depth_lambda", type=float, default=0.1,
+                        help="Depth lambda used for loss.")
+    parser.add_argument("--sigma_loss", action='store_true',
+                        help="Use depth supervision by colmap - sigma loss.")
+    parser.add_argument("--sigma_lambda", type=float, default=0.1,
+                        help="Sigma lambda used for loss.")
+    parser.add_argument("--weighted_loss", action='store_true',
+                        help="Use weighted loss by reprojection error.")
+    parser.add_argument("--relative_loss", action='store_true',
+                        help="Use relative loss.")
+    parser.add_argument("--depth_with_rgb", action='store_true',
+                    help="single forward for both depth and rgb")
+    parser.add_argument("--normalize_depth", action='store_true',
+                    help="normalize depth before calculating loss")
+    parser.add_argument("--depth_rays_prop", type=float, default=0.5,
+                        help="Proportion of depth rays.")
+
     return parser
 
 
@@ -635,6 +657,8 @@ def train():
     # Load data
     K = None
     if args.dataset_type == 'llff':
+        if args.colmap_depth:
+            depth_gts = load_colmap_depth(args.datadir, factor=args.factor, bd_factor=.75)
         images, poses, render_poses, i_test, bounding_box, near, far = load_llff_data(args.datadir, args.factor,
                                                                                       recenter=True, bd_factor=.75,
                                                                                       spherify=args.spherify,
@@ -650,6 +674,14 @@ def train():
         if args.llffhold > 0:
             print('Auto LLFF holdout,', args.llffhold)
             i_test = np.arange(images.shape[0])[::args.llffhold]
+        
+        # Если using_sparse включен, используем все изображения для обучения
+        if args.using_sparse:
+            print('using_sparse enabled: using all images for training (no test set)')
+            i_test = []
+        
+        # Преобразуем i_test в numpy array для консистентности
+        i_test = np.array(i_test)
 
         i_val = i_test
         i_train = np.array([i for i in np.arange(int(images.shape[0])) if
@@ -727,7 +759,10 @@ def train():
         ])
 
     if args.render_test:
-        render_poses = np.array(poses[i_test])
+        if len(i_test) > 0:
+            render_poses = np.array(poses[i_test])
+        else:
+            print('Warning: render_test=True but no test images available. Using render_poses spiral path instead.')
 
     # Create log dir and copy the config file
     basedir = args.basedir
@@ -739,13 +774,15 @@ def train():
         args.expname += "_sphereVIEW"
     elif args.i_embed_views==0:
         args.expname += "_posVIEW"
+    if args.colmap_depth:
+        args.expname += "_ds"        
     args.expname += "_fine"+str(args.finest_res) + "_log2T"+str(args.log2_hashmap_size)
     args.expname += "_lr"+str(args.lrate) + "_decay"+str(args.lrate_decay)
     args.expname += "_RAdam"
     if args.sparse_loss_weight > 0:
         args.expname += "_sparse" + str(args.sparse_loss_weight)
     args.expname += "_TV" + str(args.tv_loss_weight)
-    #args.expname += datetime.now().strftime('_%H_%M_%d_%m_%Y')
+    # TODO лучше это дело записать в отдельный файл
     expname = args.expname
 
     os.makedirs(os.path.join(basedir, expname), exist_ok=True)
@@ -779,7 +816,11 @@ def train():
         with torch.no_grad():
             if args.render_test:
                 # render_test switches to test poses
-                images = images[i_test]
+                if len(i_test) > 0:
+                    images = images[i_test]
+                else:
+                    print('Warning: render_test=True but no test images available. Using render_poses path instead.')
+                    images = None
             else:
                 # Default is smoother render_poses path
                 images = None
@@ -787,15 +828,23 @@ def train():
             testsavedir = os.path.join(basedir, expname, 'renderonly_{}_{:06d}'.format('test' if args.render_test else 'path', start))
             os.makedirs(testsavedir, exist_ok=True)
             tqdm.write(f"[RENDER ONLY] Test poses shape: {render_poses.shape}")
-
-            rgbs, _ = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor)
+            # TODO DS nerf uses render_test_ray() here 
+            rgbs, disps = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor)
             tqdm.write(f"[RENDER ONLY] Done rendering {testsavedir}")
-            imageio.mimwrite(os.path.join(testsavedir, 'video.mp4'), to8b(rgbs), fps=30, quality=8)
+            imageio.mimwrite(os.path.join(testsavedir, 'rgb.mp4'), to8b(rgbs), fps=30, quality=8)
+            disps[np.isnan(disps)] = 0
+            print('Depth stats', np.mean(disps), np.max(disps), np.percentile(disps, 95))
+            imageio.mimwrite(os.path.join(testsavedir, 'disp.mp4'), to8b(disps / np.percentile(disps, 95)), fps=30, quality=8)
 
             return
-
+    
     # Prepare raybatch tensor if batching random rays
-    N_rand = args.N_rand
+    # N_rand = args.N_rand N_rand меняем на N_rgb и N_depth
+    if not args.colmap_depth:
+        N_rgb = args.N_rand
+    else:
+        N_depth = int(args.N_rand * args.depth_rays_prop)
+        N_rgb = args.N_rand - N_depth
     use_batching = not args.no_batching
     if use_batching:
         # For random ray batching
@@ -810,18 +859,53 @@ def train():
         print('shuffle rays')
         np.random.shuffle(rays_rgb)
 
+        rays_depth = None
+        if args.colmap_depth:
+            print('get depth rays')
+            rays_depth_list = []
+            for i in i_train:
+                rays_depth = np.stack(get_rays_by_coord_np(H, W, focal, poses[i,:3,:4], depth_gts[i]['coord']), axis=0) # 2 x N x 3
+                # print(rays_depth.shape)
+                rays_depth = np.transpose(rays_depth, [1,0,2])
+                depth_value = np.repeat(depth_gts[i]['depth'][:,None,None], 3, axis=2) # N x 1 x 3
+                weights = np.repeat(depth_gts[i]['error'][:,None,None], 3, axis=2) # N x 1 x 3
+                rays_depth = np.concatenate([rays_depth, depth_value, weights], axis=1) # N x 4 x 3
+                rays_depth_list.append(rays_depth)
+
+            rays_depth = np.concatenate(rays_depth_list, axis=0)
+            print('rays_weights mean:', np.mean(rays_depth[:,3,0]))
+            print('rays_weights std:', np.std(rays_depth[:,3,0]))
+            print('rays_weights max:', np.max(rays_depth[:,3,0]))
+            print('rays_weights min:', np.min(rays_depth[:,3,0]))
+            print('rays_depth.shape:', rays_depth.shape)
+            rays_depth = rays_depth.astype(np.float32)
+            print('shuffle depth rays')
+            np.random.shuffle(rays_depth)
+
+            max_depth = np.max(rays_depth[:,3,0])
         print('done')
         i_batch = 0
 
     # Move training data to GPU
-    if use_batching:
-        images = torch.Tensor(images).to(device)
+    images = torch.Tensor(images).to(device)
     poses = torch.Tensor(poses).to(device)
     if use_batching:
-        rays_rgb = torch.Tensor(rays_rgb).to(device)
+        # rays_rgb = torch.Tensor(rays_rgb).to(device)
+        # rays_depth = torch.Tensor(rays_depth).to(device) if rays_depth is not None else None
+        raysRGB_iter = iter(DataLoader(RayDataset(rays_rgb), 
+                                            batch_size = N_rgb, 
+                                            shuffle=True, 
+                                            num_workers=0, 
+                                            generator=torch.Generator(device='cuda')))
+        raysDepth_iter = iter(DataLoader(RayDataset(rays_depth), 
+                                              batch_size = N_depth, 
+                                              shuffle=True, 
+                                              num_workers=0, 
+                                              generator=torch.Generator(device='cuda'))) if rays_depth is not None else None
 
 
-    N_iters = 30000 + 1
+
+    N_iters = args.N_iters + 1
     print('Begin')
     print('TRAIN views are', i_train)
     print('TEST views are', i_test)
@@ -839,25 +923,50 @@ def train():
         # Sample random ray batch
         if use_batching:
             # Random over all images
-            batch = rays_rgb[i_batch:i_batch+N_rand] # [B, 2+1, 3*?]
+            # batch = rays_rgb[i_batch:i_batch+N_rand] # [B, 2+1, 3*?]
+            try:
+                batch = next(raysRGB_iter).to(device)
+            except StopIteration:
+                raysRGB_iter = iter(DataLoader(RayDataset(rays_rgb), 
+                                                    batch_size = N_rgb, 
+                                                    shuffle=True, 
+                                                    num_workers=0, 
+                                                    generator=torch.Generator(device='cuda')))
+                batch = next(raysRGB_iter).to(device)
             batch = torch.transpose(batch, 0, 1)
             batch_rays, target_s = batch[:2], batch[2]
 
-            i_batch += N_rand
-            if i_batch >= rays_rgb.shape[0]:
-                tqdm.write(f"Shuffle data after an epoch!")
-                rand_idx = torch.randperm(rays_rgb.shape[0])
-                rays_rgb = rays_rgb[rand_idx]
-                i_batch = 0
+            if args.colmap_depth:
+                # batch_depth = rays_depth[i_batch:i_batch+N_rand]
+                try:
+                    batch_depth = next(raysDepth_iter).to(device)
+                except StopIteration:
+                    raysDepth_iter = iter(DataLoader(RayDataset(rays_depth), 
+                                                          batch_size = N_depth, 
+                                                          shuffle=True, 
+                                                          num_workers=0, 
+                                                          generator=torch.Generator(device='cuda')))
+                    batch_depth = next(raysDepth_iter).to(device)
+                batch_depth = torch.transpose(batch_depth, 0, 1)
+                batch_rays_depth = batch_depth[:2] # 2 x B x 3
+                target_depth = batch_depth[2,:,0] # B
+                ray_weights = batch_depth[3,:,0]
+
+            # i_batch += N_rand
+            # if i_batch >= rays_rgb.shape[0]:
+            #     tqdm.write(f"Shuffle data after an epoch!")
+            #     rand_idx = torch.randperm(rays_rgb.shape[0])
+            #     rays_rgb = rays_rgb[rand_idx]
+            #     i_batch = 0
 
         else:
             # Random from one image
             img_i = np.random.choice(i_train)
             target = images[img_i]
-            target = torch.Tensor(target).to(device)
+            # target = torch.Tensor(target).to(device)# TODO 
             pose = poses[img_i, :3,:4]
 
-            if N_rand is not None:
+            if N_rgb is not None:
                 rays_o, rays_d = get_rays(H, W, K, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
 
                 if i < args.precrop_iters:
@@ -875,7 +984,7 @@ def train():
                     coords = torch.stack(torch.meshgrid(torch.linspace(0, H-1, H), torch.linspace(0, W-1, W), indexing='ij'), -1)  # (H, W, 2)
 
                 coords = torch.reshape(coords, [-1,2])  # (H * W, 2)
-                select_inds = np.random.choice(coords.shape[0], size=[N_rand], replace=False)  # (N_rand,)
+                select_inds = np.random.choice(coords.shape[0], size=[N_rgb], replace=False)  # (N_rand,)
                 select_coords = coords[select_inds].long()  # (N_rand, 2)
                 rays_o = rays_o[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
                 rays_d = rays_d[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
@@ -883,23 +992,81 @@ def train():
                 target_s = target[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
 
         #####  Core optimization loop  #####
-        rgb, depth, acc, extras = render(H, W, K, chunk=args.chunk, rays=batch_rays,
+
+        if args.colmap_depth:
+            N_batch = batch_rays.shape[1]
+            batch_rays = torch.cat([batch_rays, batch_rays_depth], 1) # (2, 2 * N_rand, 3)
+
+
+        rgb, disp, depth, acc, extras = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                 verbose=i < 10, retraw=True,
                                                 **render_kwargs_train)
 
+        if args.colmap_depth and not args.depth_with_rgb:
+            # _, _, depth_col, _, extras_col = render(H, W, focal, chunk=args.chunk, rays=batch_rays_depth,
+            #                                     verbose=i < 10, retraw=True, depths=target_depth,
+            #                                     **render_kwargs_train)
+            rgb = rgb[:N_batch, :]
+            disp = disp[:N_batch]
+            acc = acc[:N_batch]
+            depth, depth_col = depth[:N_batch], depth[N_batch:]
+            extras = {x:extras[x][:N_batch] for x in extras}
+            extras_col = {x:extras[x][N_batch:] for x in extras}
+
+        elif args.colmap_depth and args.depth_with_rgb:
+            depth_col = depth
+
         optimizer.zero_grad()
         img_loss = img2mse(rgb, target_s)
+        
+        # Depth loss calculation
+        depth_loss_value = 0.0
+        if args.depth_loss:
+            # Validate dependencies for weighted loss
+            if args.weighted_loss and not args.colmap_depth:
+                raise ValueError("weighted_loss requires colmap_depth to be enabled")
+            
+            # Check depth inputs before loss calculation
+            if torch.isnan(depth_col).any():
+                tqdm.write(f"[WARNING] NaN detected in depth_col at iteration {i}")
+            if torch.isnan(target_depth).any():
+                tqdm.write(f"[WARNING] NaN detected in target_depth at iteration {i}")
+            if args.weighted_loss and ray_weights is not None and torch.isnan(ray_weights).any():
+                tqdm.write(f"[WARNING] NaN detected in ray_weights at iteration {i}")
+            
+            # Compute depth loss using the dedicated function
+            depth_loss_value = depth_loss(
+                rendered_depth=depth_col,
+                target_depth=target_depth,
+                weighted_loss=args.weighted_loss,
+                relative_loss=args.relative_loss,
+                normalize_depth=args.normalize_depth,
+                ray_weights=ray_weights if args.weighted_loss else None,
+                max_depth=max_depth if args.normalize_depth else None
+            )
+            if torch.isnan(depth_loss_value):
+                tqdm.write(f"[ERROR] NaN detected in depth_loss_value at iteration {i}")
+                tqdm.write(f"  depth_col stats: min={depth_col.min().item():.6f}, max={depth_col.max().item():.6f}, mean={depth_col.mean().item():.6f}")
+                tqdm.write(f"  target_depth stats: min={target_depth.min().item():.6f}, max={target_depth.max().item():.6f}, mean={target_depth.mean().item():.6f}")
+                if args.normalize_depth and max_depth is not None:
+                    tqdm.write(f"  max_depth: {max_depth}")
+        
+        sigma_loss = 0
+        if args.sigma_loss:
+            sigma_loss = extras_col['sigma_loss'].mean()
+            # print(sigma_loss)
         trans = extras['raw'][...,-1]
-        loss = img_loss
+        loss = img_loss + args.depth_lambda * depth_loss_value + args.sigma_lambda * sigma_loss
         psnr = mse2psnr(img_loss)
+        
 
         if 'rgb0' in extras:
             img_loss0 = img2mse(extras['rgb0'], target_s)
             loss = loss + img_loss0
             psnr0 = mse2psnr(img_loss0)
 
-        sparsity_loss = args.sparse_loss_weight*(extras["sparsity_loss"].sum() + extras["sparsity_loss0"].sum())
-        loss = loss + sparsity_loss
+        # sparsity_loss = args.sparse_loss_weight*(extras["sparsity_loss"].sum() + extras["sparsity_loss0"].sum())
+        loss = loss# + sparsity_loss
 
         # add Total Variation loss
         if args.i_embed==1:
@@ -914,6 +1081,18 @@ def train():
             loss = loss + args.tv_loss_weight * TV_loss
             if i>1000:
                 args.tv_loss_weight = 0.0
+        
+        # Final check for NaN in total loss
+        if torch.isnan(loss):
+            tqdm.write(f"[CRITICAL] NaN detected in total loss at iteration {i}")
+            tqdm.write(f"  img_loss: {img_loss.item():.6f}")
+            tqdm.write(f"  depth_loss_value: {depth_loss_value.item() if isinstance(depth_loss_value, torch.Tensor) else depth_loss_value:.6f}")
+            tqdm.write(f"  sigma_loss: {sigma_loss.item() if isinstance(sigma_loss, torch.Tensor) else sigma_loss:.6f}")
+            if args.i_embed==1 and 'TV_loss' in locals():
+                tqdm.write(f"  TV_loss: {TV_loss.item() if isinstance(TV_loss, torch.Tensor) else TV_loss:.6f}")
+            # Skip backward pass if loss is NaN to prevent training crash
+            tqdm.write(f"[CRITICAL] Skipping backward pass and optimizer step due to NaN loss")
+            continue
 
         loss.backward()
         # pdb.set_trace()
@@ -968,7 +1147,7 @@ def train():
             #     render_kwargs_test['c2w_staticcam'] = None
             #     imageio.mimwrite(moviebase + 'rgb_still.mp4', to8b(rgbs_still), fps=30, quality=8)
 
-        if i%args.i_testset==0 and i > 0:
+        if i%args.i_testset==0 and i > 0 and len(i_test) > 0:
             testsavedir = os.path.join(basedir, expname, 'testset_{:06d}'.format(i))
             os.makedirs(testsavedir, exist_ok=True)
             tqdm.write(f"[IMAGES] test poses shape {poses[i_test].shape}")
