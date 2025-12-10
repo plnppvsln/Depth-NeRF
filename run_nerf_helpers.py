@@ -360,9 +360,12 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
     dists = torch.cat([dists, torch.tensor([1e10]).expand(dists[...,:1].shape)], -1)  # [N_rays, N_samples]
 
     if torch.isnan(dists).any() or torch.isinf(dists).any():
-        print(f"! [Numerical Error] dists contains nan or inf.")
+        print(f"1 [Numerical Error] dists contains nan or inf.")
 
     dists = dists * torch.norm(rays_d[...,None,:], dim=-1)
+
+    if torch.isnan(dists).any() or torch.isinf(dists).any():
+        print(f"2 [Numerical Error] dists contains nan or inf.")
 
     rgb = torch.sigmoid(raw[...,:3])  # [N_rays, N_samples, 3]
     noise = 0.
@@ -377,13 +380,29 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
 
     # sigma_loss = sigma_sparsity_loss(raw[...,3])
     alpha = raw2alpha(raw[...,3] + noise, dists)  # [N_rays, N_samples]
+    if torch.isnan(alpha).any() or torch.isinf(alpha).any():
+        print(f"3 [Numerical Error] alpha contains nan or inf.")
+
     # weights = alpha * tf.math.cumprod(1.-alpha + 1e-10, -1, exclusive=True)
     weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)), 1.-alpha + 1e-10], -1), -1)[:, :-1]
+    if torch.isnan(weights).any() or torch.isinf(weights).any():
+        print(f"4 [Numerical Error] weights contains nan or inf.")
+
     rgb_map = torch.sum(weights[...,None] * rgb, -2)  # [N_rays, 3]
 
     depth_map = torch.sum(weights * z_vals, -1)
-    disp_map = 1./torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights, -1))
+    if torch.isnan(depth_map).any() or torch.isinf(depth_map).any():
+        print(f"5 [Numerical Error] depth_map contains nan or inf.")
+
+    # disp_map = 1./torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights, -1))
+
     acc_map = torch.sum(weights, -1)
+    disp_map = acc_map / torch.max(1e-10 * torch.ones_like(depth_map), depth_map)
+
+    if torch.isnan(disp_map).any() or torch.isinf(disp_map).any():
+        print(f"6 [Numerical Error] disp_map contains nan or inf.")
+
+    # acc_map = torch.sum(weights, -1)
 
     if white_bkgd:
         rgb_map = rgb_map + (1.-acc_map[...,None])

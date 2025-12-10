@@ -182,7 +182,7 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
         if i==0:
             tqdm.write(f"[Render] rgb shape: {rgb.shape}, depth shape: {depth.shape}")
 
-        tqdm.write(f"[Render] Iter: {i} Time: {time.time() - t:.4f}")
+        # tqdm.write(f"[Render] Iter: {i} Time: {time.time() - t:.4f}")
         t = time.time()
 
         if gt_imgs is not None and render_factor==0:
@@ -239,7 +239,7 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
 
 
     rgbs = np.stack(rgbs, 0)
-    # depths = np.stack(depths, 0)
+    depths = np.stack(depths, 0)
     disps = np.stack(disps, 0)
     if gt_imgs is not None and render_factor==0:
         avg_psnr = sum(psnrs)/len(psnrs)
@@ -247,7 +247,7 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
         with open(os.path.join(savedir, "test_psnrs_avg{:0.2f}.pkl".format(avg_psnr)), "wb") as fp:
             pickle.dump(psnrs, fp)
 
-    return rgbs, disps#, depths
+    return rgbs, depths, disps
 
 
 def create_nerf(args):
@@ -482,7 +482,7 @@ def render_rays(ray_batch,
 
     for k in ret:
         if (torch.isnan(ret[k]).any() or torch.isinf(ret[k]).any()) and DEBUG:
-            print(f"! [Numerical Error] {k} contains nan or inf.")
+            tqdm.write(f"! [Numerical Error] {k} contains nan or inf.")
 
     return ret
 
@@ -607,8 +607,8 @@ def config_parser():
                         help='finest resolultion for hashed embedding')
     parser.add_argument("--log2_hashmap_size",   type=int, default=19,
                         help='log2 of hashmap size')
-    parser.add_argument("--sparse-loss-weight", type=float, default=1e-10,
-                        help='learning rate')
+    # parser.add_argument("--sparse-loss-weight", type=float, default=1e-10,
+    #                     help='learning rate')
     parser.add_argument("--tv-loss-weight", type=float, default=1e-6,
                         help='learning rate')
 
@@ -774,13 +774,13 @@ def train():
         args.expname += "_sphereVIEW"
     elif args.i_embed_views==0:
         args.expname += "_posVIEW"
-    if args.colmap_depth:
-        args.expname += "_ds"        
+    # if args.colmap_depth:
+    #     args.expname += "_ds"        
     args.expname += "_fine"+str(args.finest_res) + "_log2T"+str(args.log2_hashmap_size)
     args.expname += "_lr"+str(args.lrate) + "_decay"+str(args.lrate_decay)
     args.expname += "_RAdam"
-    if args.sparse_loss_weight > 0:
-        args.expname += "_sparse" + str(args.sparse_loss_weight)
+    # if args.sparse_loss_weight > 0:
+    #     args.expname += "_sparse" + str(args.sparse_loss_weight)
     args.expname += "_TV" + str(args.tv_loss_weight)
     # TODO лучше это дело записать в отдельный файл
     expname = args.expname
@@ -829,12 +829,12 @@ def train():
             os.makedirs(testsavedir, exist_ok=True)
             tqdm.write(f"[RENDER ONLY] Test poses shape: {render_poses.shape}")
             # TODO DS nerf uses render_test_ray() here 
-            rgbs, disps = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor)
+            rgbs, depths, disps = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor)
             tqdm.write(f"[RENDER ONLY] Done rendering {testsavedir}")
             imageio.mimwrite(os.path.join(testsavedir, 'rgb.mp4'), to8b(rgbs), fps=30, quality=8)
-            disps[np.isnan(disps)] = 0
-            print('Depth stats', np.mean(disps), np.max(disps), np.percentile(disps, 95))
-            imageio.mimwrite(os.path.join(testsavedir, 'disp.mp4'), to8b(disps / np.percentile(disps, 95)), fps=30, quality=8)
+            # disps[np.isnan(disps)] = 0
+            print('Depth stats', np.mean(depths), np.max(depths), np.percentile(depths, 95))
+            imageio.mimwrite(os.path.join(testsavedir, 'depth.mp4'), to8b(depths / np.percentile(depths, 95)), fps=30, quality=8)
 
             return
     
@@ -1026,13 +1026,13 @@ def train():
             if args.weighted_loss and not args.colmap_depth:
                 raise ValueError("weighted_loss requires colmap_depth to be enabled")
             
-            # Check depth inputs before loss calculation
-            if torch.isnan(depth_col).any():
-                tqdm.write(f"[WARNING] NaN detected in depth_col at iteration {i}")
-            if torch.isnan(target_depth).any():
-                tqdm.write(f"[WARNING] NaN detected in target_depth at iteration {i}")
-            if args.weighted_loss and ray_weights is not None and torch.isnan(ray_weights).any():
-                tqdm.write(f"[WARNING] NaN detected in ray_weights at iteration {i}")
+            # # Check depth inputs before loss calculation
+            # if torch.isnan(depth_col).any():
+            #     tqdm.write(f"[WARNING] NaN detected in depth_col at iteration {i}")
+            # if torch.isnan(target_depth).any():
+            #     tqdm.write(f"[WARNING] NaN detected in target_depth at iteration {i}")
+            # if args.weighted_loss and ray_weights is not None and torch.isnan(ray_weights).any():
+            #     tqdm.write(f"[WARNING] NaN detected in ray_weights at iteration {i}")
             
             # Compute depth loss using the dedicated function
             depth_loss_value = depth_loss(
@@ -1044,12 +1044,12 @@ def train():
                 ray_weights=ray_weights if args.weighted_loss else None,
                 max_depth=max_depth if args.normalize_depth else None
             )
-            if torch.isnan(depth_loss_value):
-                tqdm.write(f"[ERROR] NaN detected in depth_loss_value at iteration {i}")
-                tqdm.write(f"  depth_col stats: min={depth_col.min().item():.6f}, max={depth_col.max().item():.6f}, mean={depth_col.mean().item():.6f}")
-                tqdm.write(f"  target_depth stats: min={target_depth.min().item():.6f}, max={target_depth.max().item():.6f}, mean={target_depth.mean().item():.6f}")
-                if args.normalize_depth and max_depth is not None:
-                    tqdm.write(f"  max_depth: {max_depth}")
+            # if torch.isnan(depth_loss_value):
+            #     tqdm.write(f"[ERROR] NaN detected in depth_loss_value at iteration {i}")
+            #     tqdm.write(f"  depth_col stats: min={depth_col.min().item():.6f}, max={depth_col.max().item():.6f}, mean={depth_col.mean().item():.6f}")
+            #     tqdm.write(f"  target_depth stats: min={target_depth.min().item():.6f}, max={target_depth.max().item():.6f}, mean={target_depth.mean().item():.6f}")
+            #     if args.normalize_depth and max_depth is not None:
+            #         tqdm.write(f"  max_depth: {max_depth}")
         
         sigma_loss = 0
         if args.sigma_loss:
@@ -1082,17 +1082,17 @@ def train():
             if i>1000:
                 args.tv_loss_weight = 0.0
         
-        # Final check for NaN in total loss
-        if torch.isnan(loss):
-            tqdm.write(f"[CRITICAL] NaN detected in total loss at iteration {i}")
-            tqdm.write(f"  img_loss: {img_loss.item():.6f}")
-            tqdm.write(f"  depth_loss_value: {depth_loss_value.item() if isinstance(depth_loss_value, torch.Tensor) else depth_loss_value:.6f}")
-            tqdm.write(f"  sigma_loss: {sigma_loss.item() if isinstance(sigma_loss, torch.Tensor) else sigma_loss:.6f}")
-            if args.i_embed==1 and 'TV_loss' in locals():
-                tqdm.write(f"  TV_loss: {TV_loss.item() if isinstance(TV_loss, torch.Tensor) else TV_loss:.6f}")
-            # Skip backward pass if loss is NaN to prevent training crash
-            tqdm.write(f"[CRITICAL] Skipping backward pass and optimizer step due to NaN loss")
-            continue
+        # # Final check for NaN in total loss
+        # if torch.isnan(loss):
+        #     tqdm.write(f"[CRITICAL] NaN detected in total loss at iteration {i}")
+        #     tqdm.write(f"  img_loss: {img_loss.item():.6f}")
+        #     tqdm.write(f"  depth_loss_value: {depth_loss_value.item() if isinstance(depth_loss_value, torch.Tensor) else depth_loss_value:.6f}")
+        #     tqdm.write(f"  sigma_loss: {sigma_loss.item() if isinstance(sigma_loss, torch.Tensor) else sigma_loss:.6f}")
+        #     if args.i_embed==1 and 'TV_loss' in locals():
+        #         tqdm.write(f"  TV_loss: {TV_loss.item() if isinstance(TV_loss, torch.Tensor) else TV_loss:.6f}")
+        #     # Skip backward pass if loss is NaN to prevent training crash
+        #     tqdm.write(f"[CRITICAL] Skipping backward pass and optimizer step due to NaN loss")
+        #     continue
 
         loss.backward()
         # pdb.set_trace()
@@ -1134,16 +1134,16 @@ def train():
         if i%args.i_video==0 and i > 0:
             # Turn on testing mode
             with torch.no_grad():
-                rgbs, disps = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, render_factor=args.render_factor)
-            tqdm.write(f"[VIDEO] Done, saving {rgbs.shape, disps.shape}")
+                rgbs, depths, disps = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, render_factor=args.render_factor)
+            tqdm.write(f"[VIDEO] Done, saving {rgbs.shape, depths.shape}")
             moviebase = os.path.join(basedir, expname, '{}_spiral_{:06d}_'.format(expname, i))
             imageio.mimwrite(moviebase + 'rgb.mp4', to8b(rgbs), fps=30, quality=8)
-            imageio.mimwrite(moviebase + 'disp.mp4', to8b(disps / np.max(disps)), fps=30, quality=8)
+            imageio.mimwrite(moviebase + 'depth.mp4', to8b(depths / np.max(depths)), fps=30, quality=8)
 
             # if args.use_viewdirs:
             #     render_kwargs_test['c2w_staticcam'] = render_poses[0][:3,:4]
             #     with torch.no_grad():
-            #         rgbs_still, _ = render_path(render_poses, hwf, args.chunk, render_kwargs_test)
+            #         rgbs_still, _, _ = render_path(render_poses, hwf, args.chunk, render_kwargs_test)
             #     render_kwargs_test['c2w_staticcam'] = None
             #     imageio.mimwrite(moviebase + 'rgb_still.mp4', to8b(rgbs_still), fps=30, quality=8)
 
