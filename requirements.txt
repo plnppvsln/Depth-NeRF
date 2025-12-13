@@ -7,3 +7,5 @@ opencv-python-headless==4.9.0.80
 pyvista==0.43.3
 kornia==0.8.2
 configargparse
+timm
+torchvision

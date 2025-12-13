@@ -28,6 +28,7 @@ from load_scannet import load_scannet_data # Возможно вообще не 
 from load_LINEMOD import load_LINEMOD_data # Возможно вообще не нужно
 from load_nerf_style import load_nerf_style
 
+from losses.sparse_depth_loss import local_depth_ranking_loss, spatial_continuity_loss # SparseNeRF depth ranking and continuity losses
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 np.random.seed(0)
@@ -645,6 +646,14 @@ def config_parser():
                     help="normalize depth before calculating loss")
     parser.add_argument("--depth_rays_prop", type=float, default=0.5,
                         help="Proportion of depth rays.")
+    
+    #SparseNerf paramenters parser
+    parser.add_argument("--use_dpt_ranking", action='store_true',
+                    help="Use DPT depth for ranking + continuity loss")
+    parser.add_argument("--lambda_rank", type=float, default=0.2,
+                        help="Weight for depth ranking loss")
+    parser.add_argument("--lambda_cont", type=float, default=0.02,
+                        help="Weight for spatial continuity loss")
 
     return parser
 
@@ -659,10 +668,11 @@ def train():
     if args.dataset_type == 'llff':
         if args.colmap_depth:
             depth_gts = load_colmap_depth(args.datadir, factor=args.factor, bd_factor=.75)
-        images, poses, render_poses, i_test, bounding_box, near, far = load_llff_data(args.datadir, args.factor,
+        images, poses, render_poses, i_test, bounding_box, near, far, dpt_depths = load_llff_data(args.datadir, args.factor,
                                                                                       recenter=True, bd_factor=.75,
                                                                                       spherify=args.spherify,
-                                                                                      no_ndc=args.no_ndc)
+                                                                                      no_ndc=args.no_ndc,
+                                                                                      use_dpt_ranking=args.use_dpt_ranking) # dpt_depths for SparseNeRF
         hwf = poses[0,:3,-1]
         poses = poses[:,:3,:4]
         args.bounding_box = bounding_box
@@ -888,6 +898,15 @@ def train():
 
     # Move training data to GPU
     images = torch.Tensor(images).to(device)
+
+    #SparseNerf
+    if args.use_dpt_ranking:
+        dpt_depths = [torch.from_numpy(d).to(device) for d in dpt_depths]  # list of [H,W]
+    else:
+        dpt_depths = None
+
+
+
     poses = torch.Tensor(poses).to(device)
     if use_batching:
         # rays_rgb = torch.Tensor(rays_rgb).to(device)
@@ -1016,8 +1035,23 @@ def train():
         elif args.colmap_depth and args.depth_with_rgb:
             depth_col = depth
 
+        # Compute SparseNeRF ranking and continuity losses using DPT depth (only in --no_batching mode)
+        ranking_loss = torch.tensor(0.0, device=device)
+        continuity_loss = torch.tensor(0.0, device=device)
+        if args.use_dpt_ranking:
+            if not args.no_batching:
+                raise NotImplementedError("SparseNeRF ranking loss requires --no_batching.")
+            else:
+                # In non-batched mode, use the already sampled rays and their coordinates
+                dpt_map = dpt_depths[img_i]  # [H, W]
+                # `select_coords` contains [N_rand, 2] pixel coordinates (y, x)
+                ranking_loss = local_depth_ranking_loss(depth, dpt_map.cpu().numpy(), coords=select_coords.cpu().numpy())
+                continuity_loss = spatial_continuity_loss(depth, dpt_map.cpu().numpy(), coords=select_coords.cpu().numpy())
+
         optimizer.zero_grad()
+
         img_loss = img2mse(rgb, target_s)
+
         
         # Depth loss calculation
         depth_loss_value = 0.0
@@ -1056,7 +1090,12 @@ def train():
             sigma_loss = extras_col['sigma_loss'].mean()
             # print(sigma_loss)
         trans = extras['raw'][...,-1]
-        loss = img_loss + args.depth_lambda * depth_loss_value + args.sigma_lambda * sigma_loss
+        if args.use_dpt_ranking:
+            # SparseNeRF mode: only RGB + ranking + continuity losses
+            loss = img_loss + args.lambda_rank * ranking_loss + args.lambda_cont * continuity_loss
+        else:
+            # DSNeRF mode
+            loss = img_loss + args.depth_lambda * depth_loss_value + args.sigma_lambda * sigma_loss
         psnr = mse2psnr(img_loss)
         
 
@@ -1158,7 +1197,16 @@ def train():
 
 
         if i%args.i_print==0:
-            tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item():.5f}  PSNR: {psnr.item():.4f}")
+            if args.use_dpt_ranking:
+                tqdm.write(
+                    f"[TRAIN] Iter: {i} "
+                    f"Loss: {loss.item():.5f} "
+                    f"PSNR: {psnr.item():.4f} "
+                    f"Rank: {ranking_loss.item():.5f} "
+                    f"Cont: {continuity_loss.item():.5f}"
+                )
+            else:
+                tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item():.5f}  PSNR: {psnr.item():.4f}")
             loss_list.append(loss.item())
             psnr_list.append(psnr.item())
             time_list.append(t)

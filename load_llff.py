@@ -6,6 +6,8 @@ from pathlib import Path
 from colmap_utils.read_write_model import *
 from colmap_utils.read_write_dense import *
 
+from utils.dpt_utils import load_dpt_model, predict_dpt_depth # for SparseNeRF
+
 ########## Slightly modified version of LLFF data loading code 
 ##########  see https://github.com/Fyusion/LLFF for original
 
@@ -252,7 +254,7 @@ def spherify_poses(poses, bds):
     return poses_reset, new_poses, bds
     
 
-def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=False, path_zflat=False, no_ndc=False):
+def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=False, path_zflat=False, no_ndc=False, use_dpt_ranking=False):
     
 
     poses, bds, imgs = _load_data(basedir, factor=factor) # factor=8 downsamples original imgs by 8x
@@ -325,6 +327,12 @@ def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=Fal
     images = images.astype(np.float32)
     poses = poses.astype(np.float32)
 
+    # for SparseNeRF
+    if use_dpt_ranking:
+        dpt_depths = load_dpt_for_scene(basedir, images, factor=factor)
+    else:
+        dpt_depths = None
+
     print('DEFINING BOUNDS')
     if no_ndc:
         near = np.ndarray.min(bds) * .9
@@ -337,7 +345,7 @@ def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=Fal
 
     bounding_box = get_bbox3d_for_llff(poses[:,:3,:4], poses[0,:3,-1], near=near, far=far, no_ndc=no_ndc)
 
-    return images, poses, render_poses, i_test, bounding_box, near, far
+    return images, poses, render_poses, i_test, bounding_box, near, far, dpt_depths
 
 def get_poses(images):
     poses = []
@@ -469,6 +477,34 @@ def load_colmap_llff(basedir):
 
     return train_imgs, test_imgs, train_poses, test_poses, video_poses, depth_data, bds
 
+# for SparseNeRF:
+_dpt_model_cache = None
 
+def load_dpt_for_scene(basedir, images, factor=8):
+    """
+    images: [N, H, W, 3] numpy array in [0,1]
+    Returns: list of [H, W] depth maps (inverse depth)
+    """
+    global _dpt_model_cache
+    if _dpt_model_cache is None:
+        _dpt_model_cache = load_dpt_model()
 
+    H, W = images.shape[1:3]
+    H_orig, W_orig = H * factor, W * factor
+
+    dpt_depths = []
+    dpt_dir = os.path.join(basedir, 'dpt_depths')
+    os.makedirs(dpt_dir, exist_ok=True)
+
+    for i, img in enumerate(images):
+        dpt_path = os.path.join(dpt_dir, f"{i:03d}.npy")
+        if os.path.exists(dpt_path):
+            dpt = np.load(dpt_path)
+        else:
+            # Восстановить оригинальный размер
+            img_full = img 
+            dpt = predict_dpt_depth(_dpt_model_cache, img_full, (H, W))
+            np.save(dpt_path, dpt)
+        dpt_depths.append(dpt)
+    return dpt_depths
 
