@@ -13,11 +13,11 @@ import pickle
 import matplotlib.pyplot as plt
 
 from run_nerf_helpers import *
-from optimizer import MultiOptimizer # Возможно вообще не нужно
-from radam import RAdam # TODO заменить на torch.optim.RAdam
-from loss import sigma_sparsity_loss, total_variation_loss, SigmaLoss, depth_loss
+from utils.optimizer import MultiOptimizer # Возможно вообще не нужно
+from utils.radam import RAdam # TODO заменить на torch.optim.RAdam
+from losses.loss import sigma_sparsity_loss, total_variation_loss, SigmaLoss, depth_loss
 
-from data import RayDataset
+from load_dataset.data import RayDataset
 from torch.utils.data import DataLoader
 
 from load_dataset.llff import load_llff_data, load_colmap_depth, load_colmap_llff

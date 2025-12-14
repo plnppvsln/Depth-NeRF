@@ -6,7 +6,7 @@ from torch.distributions import Categorical
 import pdb
 import numpy as np
 
-from hash_encoding import HashEmbedder, SHEncoder
+from utils.hash_encoding import HashEmbedder, SHEncoder
 from matplotlib import pyplot as plt
 
 # Misc

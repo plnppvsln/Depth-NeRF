@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from ray_utils import get_rays, get_ray_directions, get_ndc_rays
+from utils.ray_utils import get_rays, get_ray_directions, get_ndc_rays
 
 
 trans_t = lambda t : torch.Tensor([
