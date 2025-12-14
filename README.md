@@ -63,9 +63,9 @@ Depth-NeRF/
 ├── README.md                              ← Full project documentation
 ├── requirements.txt                       ← Python dependencies 
 ├── .gitignore                             ← Excludes logs, cache, weights, IDE files
-├── Dockerfile                             ← For reproducible environment
-│
+├── train.sh                               ← Training script
 ├── run_nerf.py                            ← Main training/inference script
+├── run_nerf_helpers.py                    ← Helper functions for NeRF
 │
 ├── configs/                               ← Configuration files for all methods
 │   ├── fern_3v.txt                        
@@ -75,7 +75,12 @@ Depth-NeRF/
 ├── scripts/                               ← Utility & data preparation scripts
 │   ├── download_dataset.py                ← Downloads datasets (lego, fern, etc.)
 │   ├── imgs2poses.py                      ← Runs COLMAP to estimate camera poses
-│   └── download_weights.py                ← Downloads DPT weights into ./weights/
+│   ├── download_weights.py                ← Downloads DPT weights into ./weights/
+│   ├── compare_all_methods.py             ← Compares results from all methods
+│   ├── download_lego_dataset.sh           ← Helper script for LEGO dataset
+│   ├── eval.py                            ← Evaluation script
+│   ├── eval_metrics_script.py             ← Computes PSNR, SSIM, LPIPS metrics
+│   └── install_deps.py                    ← Installs system dependencies
 │
 ├── data/                                  ← EMPTY by default (datasets downloaded here)
 │   └── (populated after: python scripts/download_dataset.py --dataset fern)
@@ -95,23 +100,26 @@ Depth-NeRF/
 │   ├── transforms.py
 │   └── ... (other DPT source files)
 │
-├── llff/                                  ← [Kept as-is] LLFF data loader & processing
-│   ├── poses.py
-│   └── ... 
+├── llff/                                  ← LLFF data loader & processing
+│   ├── poses.py                           ← LLFF pose utilities
+│   └── ...                                ← Other LLFF utilities 
 │
-├── load_dataset/                          ← [Kept as-is] Dataset loading logic
+├── load_dataset/                          ← Dataset loading logic
 │   ├── __init__.py
-│   ├── load_llff.py
-│   └── ...
+│   ├── load_llff.py                       ← LLFF dataset loader
+│   └── data.py
 │
-├── losses/                                ← [Kept as-is] Custom loss functions
-│   ├── sparse_depth_loss.py
-│   └── ...
+├── losses/                                ← Custom loss functions
+│   ├── sparse_depth_loss.py               ← Sparse depth ranking loss
+│   └── loss.py                            ← Base loss implementations
 │
-├── utils/                                 ← [Kept as-is] Helper functions
-│   ├── ray_utils.py
-│   ├── dpt_utils.py
-│   └── ...
+├── utils/                                 ← Helper functions
+│   ├── ray_utils.py                       ← Ray sampling utilities
+│   ├── dpt_utils.py                       ← DPT integration utilities
+│   ├── camera_pose_visualizer.py          ← Camera pose visualization
+│   ├── hash_encoding.py                   ← Hash grid encoding
+│   ├── optimizer.py                       ← Custom optimizers
+│   └── radam.py                           ← RAdam optimizer implementation
 │
 └── weights/                               ← Pretrained model weights 
     └── dpt_hybrid-midas-501f0c75.pt       ← Downloaded by scripts/download_weights.py
@@ -152,7 +160,7 @@ The project includes a convenient script to download pre-processed NeRF datasets
 To see all available datasets:
 
 ```bash
-python download_dataset.py --list
+python scripts/download_dataset.py --list
 ```
 
 This will display all available datasets that can be downloaded.
@@ -162,14 +170,14 @@ This will display all available datasets that can be downloaded.
 To download a specific dataset:
 
 ```bash
-python download_dataset.py --dataset <dataset_name>
+python scripts/download_dataset.py --dataset <dataset_name>
 ```
 
 For example:
 
 ```bash
-python download_dataset.py --dataset lego
-python download_dataset.py --dataset fern
+python scripts/download_dataset.py --dataset lego
+python scripts/download_dataset.py --dataset fern
 ```
 
 #### Available Datasets
@@ -184,7 +192,7 @@ python download_dataset.py --dataset fern
 By default, datasets are saved to the `./data` directory. You can specify a custom directory:
 
 ```bash
-python download_dataset.py --dataset lego --save_dir /path/to/custom/directory
+python scripts/download_dataset.py --dataset lego --save_dir /path/to/custom/directory
 ```
 
 **Note:** The default save directory (`./data`) is recommended as it matches the expected project structure.
@@ -193,7 +201,7 @@ python download_dataset.py --dataset lego --save_dir /path/to/custom/directory
 
 For more information, run:
 ```bash
-python download_dataset.py --help
+python scripts/download_dataset.py --help
 ```
 2. **Download a Weight**
 Download weight:
@@ -217,14 +225,14 @@ COLMAP will be automatically downloaded on Windows if not found. On Linux/Mac, y
 To process images and generate camera poses, use the `imgs2poses.py` script:
 
 ```bash
-python imgs2poses.py <scene_directory>
+python scripts/imgs2poses.py <scene_directory>
 ```
 
 For example:
 
 ```bash
-python imgs2poses.py data/nerf_llff_data/fern
-python imgs2poses.py data/nerf_custom/fox
+python scripts/imgs2poses.py data/nerf_llff_data/fern
+python scripts/imgs2poses.py data/nerf_custom/fox
 ```
 
 ### Directory Structure
@@ -247,7 +255,7 @@ You can specify the matching algorithm using the `--match_type` parameter:
 - `sequential_matcher`: Best for video sequences or ordered images
 
 ```bash
-python imgs2poses.py --match_type sequential_matcher <scene_directory>
+python scripts/imgs2poses.py --match_type sequential_matcher <scene_directory>
 ```
 
 #### Removing Unregistered Images
@@ -255,7 +263,7 @@ python imgs2poses.py --match_type sequential_matcher <scene_directory>
 By default, all images are kept in the `images/` directory, even if COLMAP couldn't register them. However, if you want to automatically remove unregistered images to avoid mismatches between images and poses, you can use the `--remove-unregistered` flag:
 
 ```bash
-python imgs2poses.py --remove-unregistered <scene_directory>
+python scripts/imgs2poses.py --remove-unregistered <scene_directory>
 ```
 
 This will delete any images from the `images/` directory that are not listed in `view_imgs.txt` (i.e., images that COLMAP couldn't register). This is useful to prevent errors when loading data, as the number of images will match the number of poses in `poses_bounds.npy`.
@@ -280,20 +288,21 @@ The script will automatically skip COLMAP if the sparse reconstruction already e
 3. **Train & Render Methods**
 **SparseNeRF:**
 ```bash
-python src/run_nerf.py --config configs/fern_3v.txt \
+python run_nerf.py --config configs/fern_3v.txt \
   --use_dpt_ranking --no_batching --N_iters 1000 --lrate 0.01 \
   --lrate_decay 10 --lambda_rank 0.2 --lambda_cont 0.02 \
   --render_factor 8 --i_video 1000
 ```
 **DSNeRF:**
 ```bash
-python src/run_nerf.py --config configs/fern_3v_ds.txt \
+python run_nerf.py --config configs/fern_3v_ds.txt \
   --finest_res 1024 --log2_hashmap_size 19 --lrate 0.01 \
   --lrate_decay 10 --render_factor 8 --i_video 1000
   ```
 **HashNeRF:**
 ```bash
-python src/run_nerf.py --config configs/fern_3v_hash.txt \
+python run_nerf.py --config configs/fern_3v_hash.txt \
   --render_factor 8 --i_video 1000
 ```
-> Outputs (videos, depth maps, logs) are saved in logs/ by default. Use the provided compare_all_methods.py script (in scripts/) to automate comparison.
+
+> Outputs (videos, depth maps, logs) are saved in logs/ by default. Use the provided compare_all_methods.py script (in scripts/) to automate comparison. 
