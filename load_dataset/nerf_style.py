@@ -5,7 +5,7 @@ import imageio
 import json
 import cv2
 
-from utils import get_bbox3d_for_nerf_style, pose_spherical, compute_near_far_from_poses
+from .utils import get_bbox3d_for_nerf_style, pose_spherical, compute_near_far_from_poses
 
 def load_nerf_style(basedir, half_res=False, testskip=8, device='cuda:0'):
     # ---- Load transforms.json ----

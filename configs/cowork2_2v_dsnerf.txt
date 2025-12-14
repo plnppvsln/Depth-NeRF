@@ -1,0 +1,21 @@
+expname = cowork2_2v_dsnerf
+basedir = ./logs
+datadir = ./data/nerf_llff_data/cowork2_2v
+dataset_type = llff
+
+factor = 4
+llffhold = 0
+
+N_rand = 1024
+N_samples = 64
+N_importance = 128
+
+use_viewdirs = True
+raw_noise_std = 1e0
+
+using_sparse = True
+no_ndc = True
+
+colmap_depth = True
+depth_loss = True
+depth_lambda = 0.1

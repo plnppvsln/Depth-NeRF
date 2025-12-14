@@ -1,7 +1,7 @@
 import numpy as np
 import os, imageio
 
-from utils import get_bbox3d_for_llff
+from .utils import get_bbox3d_for_llff
 from pathlib import Path
 from colmap_utils.read_write_model import *
 from colmap_utils.read_write_dense import *
@@ -507,4 +507,3 @@ def load_dpt_for_scene(basedir, images, factor=8):
             np.save(dpt_path, dpt)
         dpt_depths.append(dpt)
     return dpt_depths
-

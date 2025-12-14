@@ -9,6 +9,9 @@ DATASETS = {
     "lego": "https://huggingface.co/datasets/artyogan/nerf_project_datasets/resolve/main/lego.zip",
     "fern": "https://huggingface.co/datasets/artyogan/nerf_project_datasets/resolve/main/fern.zip",
     "fox": "https://huggingface.co/datasets/artyogan/nerf_project_datasets/resolve/main/fox.zip",
+    "cowork1": "https://huggingface.co/datasets/artyogan/nerf_project_datasets/resolve/main/cowork1.zip",
+    "cowork2": "https://huggingface.co/datasets/artyogan/nerf_project_datasets/resolve/main/cowork2.zip",
+    "table": "https://huggingface.co/datasets/artyogan/nerf_project_datasets/resolve/main/table.zip",
 }
 
 def download_file(url, dest):
@@ -52,7 +55,7 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"Available datasets: {', '.join(DATASETS.keys())}"
     )
-    parser.add_argument("--dataset", type=str, help="Dataset name to download (e.g. shaving_set, lego)")
+    parser.add_argument("--dataset", type=str, help="Dataset name to download (e.g. cowork1, lego)")
     parser.add_argument("--save_dir", type=str, default="data", help="Directory to save datasets (by default is ./data and should be it)")
     parser.add_argument("--list", action="store_true", help="List all available datasets")
     args = parser.parse_args()

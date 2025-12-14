@@ -1,6 +1,8 @@
 """
 Called like so:
 python eval_metrics_script.py --generated_views=/filepath/generated_views_dtu_6 --ground_truth_views=/filepath/gt_views_dtu_6
+
+TODO Надо переписывать почти полностью
 """
 import os
 import glob

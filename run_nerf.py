@@ -2,7 +2,6 @@ import os, sys
 from datetime import datetime
 import numpy as np
 import imageio
-import json
 import random
 import time
 import torch
@@ -21,12 +20,12 @@ from loss import sigma_sparsity_loss, total_variation_loss, SigmaLoss, depth_los
 from data import RayDataset
 from torch.utils.data import DataLoader
 
-from load_llff import load_llff_data, load_colmap_depth, load_colmap_llff
-from load_deepvoxels import load_dv_data # Возможно вообще не нужно
-from load_blender import load_blender_data
-from load_scannet import load_scannet_data # Возможно вообще не нужно
-from load_LINEMOD import load_LINEMOD_data # Возможно вообще не нужно
-from load_nerf_style import load_nerf_style
+from load_dataset.llff import load_llff_data, load_colmap_depth, load_colmap_llff
+from load_dataset.deepvoxels import load_dv_data # Возможно вообще не нужно
+from load_dataset.blender import load_blender_data
+from load_dataset.scannet import load_scannet_data # Возможно вообще не нужно
+from load_dataset.LINEMOD import load_LINEMOD_data # Возможно вообще не нужно
+from load_dataset.nerf_style import load_nerf_style
 
 from losses.sparse_depth_loss import local_depth_ranking_loss, spatial_continuity_loss # SparseNeRF depth ranking and continuity losses
 
@@ -200,42 +199,42 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
             # Можно разные варианты сохранения изображений добавить
             # Здесь: первый одной картинкой сохраняет, второй - двумя разными
 
-            # save rgb and depth as a figure
-            fig = plt.figure(figsize=(25,15))
-            ax = fig.add_subplot(1, 2, 1)
-            rgb8 = to8b(rgbs[-1])
-            ax.imshow(rgb8)
-            ax.axis('off')
-            ax = fig.add_subplot(1, 2, 2)
-            ax.imshow(depths[-1], cmap='plasma', vmin=0, vmax=1)
-            ax.axis('off')
-            filename = os.path.join(savedir, '{:03d}.png'.format(i))
-            # save as png
-            plt.savefig(filename, bbox_inches='tight', pad_inches=0)
-            plt.close(fig)
-            # imageio.imwrite(filename, rgb8)
-
+            # # save rgb and depth as a figure
+            # fig = plt.figure(figsize=(25,15))
+            # ax = fig.add_subplot(1, 2, 1)
             # rgb8 = to8b(rgbs[-1])
-            # rgb8[np.isnan(rgb8)] = 0
+            # ax.imshow(rgb8)
+            # ax.axis('off')
+            # ax = fig.add_subplot(1, 2, 2)
+            # ax.imshow(depths[-1], cmap='plasma', vmin=0, vmax=1)
+            # ax.axis('off')
             # filename = os.path.join(savedir, '{:03d}.png'.format(i))
-            # imageio.imwrite(filename, rgb8)
-            # depth = depth.cpu().numpy()
-            # tqdm.write("max depth: {np.nanmax(depth)}")
-            # depth_valid = depth[~np.isnan(depth)]
-            # if len(depth_valid) > 0:
-            #     depth_min = np.nanmin(depth)
-            #     depth_max = np.nanmax(depth)
-            #     if depth_max > depth_min:
-            #         depth_normalized = (depth - near) / (far - near)
-            #     else:
-            #         depth_normalized = np.zeros_like(depth)
-            #     depth_normalized = np.clip(depth_normalized, 0, 1)
-            #     depth_normalized[np.isnan(depth_normalized)] = 0
-            #     depth8 = (255 * depth_normalized).astype(np.uint8)
-            # else:
-            #     depth8 = np.zeros_like(depth, dtype=np.uint8)
-            # imageio.imwrite(os.path.join(savedir, '{:03d}_depth.png'.format(i)), depth8)
-            # np.savez(os.path.join(savedir, '{:03d}.npz'.format(i)), rgb=rgb.cpu().numpy(), disp=disp.cpu().numpy(), acc=acc.cpu().numpy(), depth=depth)
+            # # save as png
+            # plt.savefig(filename, bbox_inches='tight', pad_inches=0)
+            # plt.close(fig)
+            # # imageio.imwrite(filename, rgb8)
+
+            rgb8 = to8b(rgbs[-1])
+            rgb8[np.isnan(rgb8)] = 0
+            filename = os.path.join(savedir, '{:03d}.png'.format(i))
+            imageio.imwrite(filename, rgb8)
+            depth = depth.cpu().numpy()
+            tqdm.write(f"max depth: {np.nanmax(depth)}")
+            depth_valid = depth[~np.isnan(depth)]
+            if len(depth_valid) > 0:
+                depth_min = np.nanmin(depth)
+                depth_max = np.nanmax(depth)
+                if depth_max > depth_min:
+                    depth_normalized = (depth - near) / (far - near)
+                else:
+                    depth_normalized = np.zeros_like(depth)
+                depth_normalized = np.clip(depth_normalized, 0, 1)
+                depth_normalized[np.isnan(depth_normalized)] = 0
+                depth8 = (255 * depth_normalized).astype(np.uint8)
+            else:
+                depth8 = np.zeros_like(depth, dtype=np.uint8)
+            imageio.imwrite(os.path.join(savedir, '{:03d}_depth.png'.format(i)), depth8)
+            np.savez(os.path.join(savedir, '{:03d}.npz'.format(i)), rgb=rgb.cpu().numpy(), disp=disp.cpu().numpy(), acc=acc.cpu().numpy(), depth=depth)
 
 
 
@@ -780,10 +779,10 @@ def train():
         args.expname += "_hashXYZ"
     elif args.i_embed==0:
         args.expname += "_posXYZ"
-    if args.i_embed_views==2:
-        args.expname += "_sphereVIEW"
-    elif args.i_embed_views==0:
-        args.expname += "_posVIEW"
+    # if args.i_embed_views==2:
+    #     args.expname += "_sphereVIEW"
+    # elif args.i_embed_views==0:
+    #     args.expname += "_posVIEW"
     # if args.colmap_depth:
     #     args.expname += "_ds"        
     args.expname += "_fine"+str(args.finest_res) + "_log2T"+str(args.log2_hashmap_size)
@@ -1049,9 +1048,7 @@ def train():
                 continuity_loss = spatial_continuity_loss(depth, dpt_map.cpu().numpy(), coords=select_coords.cpu().numpy())
 
         optimizer.zero_grad()
-
         img_loss = img2mse(rgb, target_s)
-
         
         # Depth loss calculation
         depth_loss_value = 0.0

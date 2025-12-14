@@ -4,7 +4,7 @@ import sys
 import imageio
 # import skimage.transform
 
-from load_llff import _minify as llff_minify
+from load_dataset.llff import _minify as llff_minify
 
 from llff.poses.colmap_wrapper import run_colmap
 import llff.poses.colmap_read_model as read_model
