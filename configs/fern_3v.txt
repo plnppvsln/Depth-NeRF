@@ -1,6 +1,6 @@
-expname = fern_2v
+expname = fern_3v
 basedir = ./logs
-datadir = ./data/nerf_llff_data/fern_2v
+datadir = ./data/nerf_llff_data/fern_3v
 dataset_type = llff
 
 factor = 4
@@ -14,4 +14,4 @@ use_viewdirs = True
 raw_noise_std = 1e0
 
 using_sparse = True
-no_ndc = False
+no_ndc = True

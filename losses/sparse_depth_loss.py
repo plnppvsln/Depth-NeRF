@@ -62,10 +62,11 @@ def spatial_continuity_loss(rendered_depth, dpt_depth, coords, k=4, margin=1e-4)
         center_val = dpt[y, x]
         center_rd = rendered_depth[idx]
 
-        # Find k nearest neighbors by DPT value (within a local region)
+        # Find neighbors within a 6x6 patch as described in the paper
         neighbors = []
-        for dy in [-1, 0, 1]:
-            for dx in [-1, 0, 1]:
+        # Search in a 6x6 region (from -3 to +3 pixels in both directions)
+        for dy in range(-3, 4):  # -3, -2, -1, 0, 1, 2, 3
+            for dx in range(-3, 4):  # -3, -2, -1, 0, 1, 2, 3
                 ny, nx = y + dy, x + dx
                 if (ny, nx) in coord_to_idx:
                     neighbors.append(coord_to_idx[(ny, nx)])
@@ -73,11 +74,27 @@ def spatial_continuity_loss(rendered_depth, dpt_depth, coords, k=4, margin=1e-4)
         if len(neighbors) < 2:
             continue
 
-        # Sort neighbors by DPT value difference
-        neighbor_vals = [dpt[int(coords[n][0]), int(coords[n][1])] for n in neighbors]
-        sorted_pairs = sorted(zip(neighbor_vals, neighbors), key=lambda x: abs(x[0] - center_val))
+        # Get DPT values for all neighbors
+        neighbor_vals = []
+        valid_neighbors = []
+        for n in neighbors:
+            ny, nx = int(coords[n][0]), int(coords[n][1])
+            if 0 <= ny < H and 0 <= nx < W:
+                neighbor_vals.append(dpt[ny, nx])
+                valid_neighbors.append(n)
+        
+        if len(valid_neighbors) < 2:
+            continue
+
+        # Sort neighbors by absolute difference in DPT values
+        # This finds the k nearest neighbors measured by depth values
+        sorted_pairs = sorted(zip(neighbor_vals, valid_neighbors), 
+                             key=lambda x: abs(x[0] - center_val))
+        
+        # Select top k neighbors with smallest depth difference
         selected_neighbors = [n for _, n in sorted_pairs[:k]]
 
+        # Apply continuity constraint to selected neighbors
         for n in selected_neighbors:
             diff = torch.abs(center_rd - rendered_depth[n]) - margin
             if diff > 0:
