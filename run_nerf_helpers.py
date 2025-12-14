@@ -275,6 +275,44 @@ def get_rays_by_coord_np(H, W, focal, c2w, coords):
     return rays_o, rays_d
 
 
+def filter_depth_by_precrop(depth_data, H, W, i, precrop_iters, precrop_frac):
+    """Filter depth coordinates by precrop region if needed.
+    
+    Args:
+        depth_data: dict with keys 'coord', 'depth', and optionally 'error'
+        H: image height
+        W: image width
+        i: current iteration
+        precrop_iters: number of iterations to apply precrop
+        precrop_frac: fraction of image to use for precrop
+        
+    Returns:
+        filtered_coords: filtered coordinates
+        filtered_depths: filtered depth values
+        filtered_errors: filtered error values (or None if not available)
+    """
+    depth_coords = depth_data['coord']  # (N, 2) - format: [x, y] or [width, height]
+    
+    # Apply precrop filtering if needed (same as for RGB rays)
+    if i < precrop_iters:
+        dH = int(H//2 * precrop_frac)
+        dW = int(W//2 * precrop_frac)
+        # depth_coords format is [x, y] where x is width (W) and y is height (H)
+        # Filter coordinates to be within the precrop region
+        # RGB uses linspace from H//2 - dH to H//2 + dH - 1, so we use <= for upper bound
+        mask = ((depth_coords[:, 0] >= W//2 - dW) & (depth_coords[:, 0] <= W//2 + dW - 1) &
+                (depth_coords[:, 1] >= H//2 - dH) & (depth_coords[:, 1] <= H//2 + dH - 1))
+        filtered_coords = depth_coords[mask]
+        filtered_depths = depth_data['depth'][mask]
+        filtered_errors = depth_data['error'][mask] if 'error' in depth_data else None
+    else:
+        filtered_coords = depth_coords
+        filtered_depths = depth_data['depth']
+        filtered_errors = depth_data['error'] if 'error' in depth_data else None
+    
+    return filtered_coords, filtered_depths, filtered_errors
+
+
 def ndc_rays(H, W, focal, near, rays_o, rays_d):
     # Shift ray origins to near plane
     t = -(near + rays_o[...,2]) / rays_d[...,2]

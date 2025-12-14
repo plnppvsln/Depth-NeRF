@@ -199,42 +199,42 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
             # Можно разные варианты сохранения изображений добавить
             # Здесь: первый одной картинкой сохраняет, второй - двумя разными
 
-            # # save rgb and depth as a figure
-            # fig = plt.figure(figsize=(25,15))
-            # ax = fig.add_subplot(1, 2, 1)
-            # rgb8 = to8b(rgbs[-1])
-            # ax.imshow(rgb8)
-            # ax.axis('off')
-            # ax = fig.add_subplot(1, 2, 2)
-            # ax.imshow(depths[-1], cmap='plasma', vmin=0, vmax=1)
-            # ax.axis('off')
-            # filename = os.path.join(savedir, '{:03d}.png'.format(i))
-            # # save as png
-            # plt.savefig(filename, bbox_inches='tight', pad_inches=0)
-            # plt.close(fig)
-            # # imageio.imwrite(filename, rgb8)
-
+            # save rgb and depth as a figure
+            fig = plt.figure(figsize=(25,15))
+            ax = fig.add_subplot(1, 2, 1)
             rgb8 = to8b(rgbs[-1])
-            rgb8[np.isnan(rgb8)] = 0
+            ax.imshow(rgb8)
+            ax.axis('off')
+            ax = fig.add_subplot(1, 2, 2)
+            ax.imshow(depths[-1], cmap='plasma', vmin=0, vmax=1)
+            ax.axis('off')
             filename = os.path.join(savedir, '{:03d}.png'.format(i))
-            imageio.imwrite(filename, rgb8)
-            depth = depth.cpu().numpy()
-            tqdm.write(f"max depth: {np.nanmax(depth)}")
-            depth_valid = depth[~np.isnan(depth)]
-            if len(depth_valid) > 0:
-                depth_min = np.nanmin(depth)
-                depth_max = np.nanmax(depth)
-                if depth_max > depth_min:
-                    depth_normalized = (depth - near) / (far - near)
-                else:
-                    depth_normalized = np.zeros_like(depth)
-                depth_normalized = np.clip(depth_normalized, 0, 1)
-                depth_normalized[np.isnan(depth_normalized)] = 0
-                depth8 = (255 * depth_normalized).astype(np.uint8)
-            else:
-                depth8 = np.zeros_like(depth, dtype=np.uint8)
-            imageio.imwrite(os.path.join(savedir, '{:03d}_depth.png'.format(i)), depth8)
-            np.savez(os.path.join(savedir, '{:03d}.npz'.format(i)), rgb=rgb.cpu().numpy(), disp=disp.cpu().numpy(), acc=acc.cpu().numpy(), depth=depth)
+            # save as png
+            plt.savefig(filename, bbox_inches='tight', pad_inches=0)
+            plt.close(fig)
+            # imageio.imwrite(filename, rgb8)
+
+            # rgb8 = to8b(rgbs[-1])
+            # rgb8[np.isnan(rgb8)] = 0
+            # filename = os.path.join(savedir, '{:03d}.png'.format(i))
+            # imageio.imwrite(filename, rgb8)
+            # depth = depth.cpu().numpy()
+            # tqdm.write(f"max depth: {np.nanmax(depth)}")
+            # depth_valid = depth[~np.isnan(depth)]
+            # if len(depth_valid) > 0:
+            #     depth_min = np.nanmin(depth)
+            #     depth_max = np.nanmax(depth)
+            #     if depth_max > depth_min:
+            #         depth_normalized = (depth - near) / (far - near)
+            #     else:
+            #         depth_normalized = np.zeros_like(depth)
+            #     depth_normalized = np.clip(depth_normalized, 0, 1)
+            #     depth_normalized[np.isnan(depth_normalized)] = 0
+            #     depth8 = (255 * depth_normalized).astype(np.uint8)
+            # else:
+            #     depth8 = np.zeros_like(depth, dtype=np.uint8)
+            # imageio.imwrite(os.path.join(savedir, '{:03d}_depth.png'.format(i)), depth8)
+            # np.savez(os.path.join(savedir, '{:03d}.npz'.format(i)), rgb=rgb.cpu().numpy(), disp=disp.cpu().numpy(), acc=acc.cpu().numpy(), depth=depth)
 
 
 
@@ -999,7 +999,12 @@ def train():
                     if i == start:
                         tqdm.write(f"[Config] Center cropping of size {2*dH} x {2*dW} is enabled until iter {args.precrop_iters}")
                 else:
-                    coords = torch.stack(torch.meshgrid(torch.linspace(0, H-1, H), torch.linspace(0, W-1, W), indexing='ij'), -1)  # (H, W, 2)
+                    coords = torch.stack(
+                        torch.meshgrid(
+                            torch.linspace(0, H-1, H), 
+                            torch.linspace(0, W-1, W), 
+                            indexing='ij'
+                        ), -1)  # (H, W, 2)
 
                 coords = torch.reshape(coords, [-1,2])  # (H * W, 2)
                 select_inds = np.random.choice(coords.shape[0], size=[N_rgb], replace=False)  # (N_rand,)
@@ -1008,6 +1013,33 @@ def train():
                 rays_d = rays_d[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
                 batch_rays = torch.stack([rays_o, rays_d], 0)
                 target_s = target[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+
+            if args.colmap_depth:
+                # Get depth data for the selected image
+                # depth_gts is loaded at the beginning of train() if args.colmap_depth is True
+                depth_data = depth_gts[img_i]
+                
+                # Apply precrop filtering if needed (same as for RGB rays)
+                depth_coords, depth_depths, depth_errors = filter_depth_by_precrop(
+                    depth_data, H, W, i, args.precrop_iters, args.precrop_frac
+                )
+                
+                num_depth_points = len(depth_coords)
+                if num_depth_points > 0:
+                    # Sample N_depth random indices from available depth points
+                    select_depth_inds = np.random.choice(num_depth_points, size=[min(N_depth, num_depth_points)], replace=False)
+                    
+                    # Get rays for selected depth coordinates
+                    rays_depth_o, rays_depth_d = get_rays_by_coord_np(H, W, focal, pose.cpu().numpy(), depth_coords[select_depth_inds])
+                    batch_rays_depth = torch.stack([
+                        torch.Tensor(rays_depth_o.copy()).to(device),
+                        torch.Tensor(rays_depth_d.copy()).to(device)
+                    ], 0)  # (2, N_depth, 3)
+                    
+                    target_depth = torch.Tensor(depth_depths[select_depth_inds]).to(device)  # (N_depth,)
+                    ray_weights = torch.Tensor(depth_errors[select_depth_inds]).to(device) if depth_errors is not None else torch.ones_like(target_depth)  # (N_depth,)
+                else:
+                    raise NotImplementedError('Something went wront: num_depth_points <= 0')
 
         #####  Core optimization loop  #####
 
@@ -1056,14 +1088,6 @@ def train():
             # Validate dependencies for weighted loss
             if args.weighted_loss and not args.colmap_depth:
                 raise ValueError("weighted_loss requires colmap_depth to be enabled")
-            
-            # # Check depth inputs before loss calculation
-            # if torch.isnan(depth_col).any():
-            #     tqdm.write(f"[WARNING] NaN detected in depth_col at iteration {i}")
-            # if torch.isnan(target_depth).any():
-            #     tqdm.write(f"[WARNING] NaN detected in target_depth at iteration {i}")
-            # if args.weighted_loss and ray_weights is not None and torch.isnan(ray_weights).any():
-            #     tqdm.write(f"[WARNING] NaN detected in ray_weights at iteration {i}")
             
             # Compute depth loss using the dedicated function
             depth_loss_value = depth_loss(
