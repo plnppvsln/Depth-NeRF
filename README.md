@@ -40,17 +40,14 @@ All methods share the same ray sampling, network architecture (except hash encod
 
 Below are the qualitative and quantitative results obtained on the **LLFF `fern` scene with only 3 input views**.
 
-#TODO вставить картинку и видио
- **You can insert media and tables here** (replace placeholders).
+#TODO вставить картинку и видио и обновиь таблицу
 
 ### Demonstration Video
 
 
-### Qualitative Results (Image Gallery)
 
 
-
-### Quantitative Metrics
+### Metrics
 
 | Method        | PSNR ↑ | SSIM ↑ | LPIPS ↓ | Training Time (1k iters) |
 |---------------|--------|--------|---------|--------------------------|
@@ -60,7 +57,7 @@ Below are the qualitative and quantitative results obtained on the **LLFF `fern`
 
 ---
 ## Project Structure
-
+```
 Depth-NeRF/
 │
 ├── README.md                              ← Full project documentation
@@ -118,6 +115,7 @@ Depth-NeRF/
 │
 └── weights/                               ← Pretrained model weights 
     └── dpt_hybrid-midas-501f0c75.pt       ← Downloaded by scripts/download_weights.py
+```
 
 ## Installation and Setup
 
@@ -129,20 +127,20 @@ Depth-NeRF/
 ### Step-by-Step Installation
 
 1. **Clone the repository**
-   ```bash
+```bash
    git clone https://github.com/plnppvsln/Depth-NeRF.git
    cd Depth-NeRF
-   ```
+```
 2. **Create a virtual environment (recommended)**
-  ```bash
+```bash
   python -m venv venv
   source venv/bin/activate    # Linux/macOS
   venv\Scripts\activate       # Windows
-    ```
+```
 3. **Install Python dependencies**
-  ```bash
+```bash
   pip install -r requirements.txt
-  ```
+```
 
 ### Running the Project
 
@@ -297,6 +295,5 @@ python src/run_nerf.py --config configs/fern_3v_ds.txt \
 ```bash
 python src/run_nerf.py --config configs/fern_3v_hash.txt \
   --render_factor 8 --i_video 1000
-    ```
-> Outputs (videos, depth maps, logs) are saved in logs/ by default.
-Use the provided compare_all_methods.py script (in scripts/) to automate comparison.
+```
+> Outputs (videos, depth maps, logs) are saved in logs/ by default. Use the provided compare_all_methods.py script (in scripts/) to automate comparison.
