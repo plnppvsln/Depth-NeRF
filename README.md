@@ -45,10 +45,7 @@ Below are the qualitative and quantitative results obtained on the **LLFF `fern`
 
 ### Demonstration Video
 
-<p align="center">
-  <video src="results/first.mp4" width="80%" controls></video>
-</p>
-
+![preliminary results](results\first.gif)
 
 ### Metrics
 
