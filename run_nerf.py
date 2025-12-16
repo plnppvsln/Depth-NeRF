@@ -600,7 +600,7 @@ def config_parser():
                         help='frequency of weight ckpt saving')
     parser.add_argument("--i_testset", type=int, default=1000,
                         help='frequency of testset saving')
-    parser.add_argument("--i_video",   type=int, default=3000,
+    parser.add_argument("--i_video",   type=int, default=7000,
                         help='frequency of render_poses video saving')
 
     parser.add_argument("--finest_res",   type=int, default=512,
