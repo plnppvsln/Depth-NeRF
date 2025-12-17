@@ -1,9 +1,19 @@
-# CUDA_VISIBLE_DEVICES=0 python run_nerf.py --config configs/chair.txt --finest_res 1024
-# CUDA_VISIBLE_DEVICES=1 python run_nerf.py --config configs/chair.txt --finest_res 1024 --i_embed_views 0
-# CUDA_VISIBLE_DEVICES=2 python run_nerf.py --config configs/chair.txt --finest_res 1024 --lrate 0.01 --lrate_decay 100
-# CUDA_VISIBLE_DEVICES=3 python run_nerf.py --config configs/chair.txt --finest_res 1024 --log2_hashmap_size 14 
+python run_nerf.py --config configs/sparsenerf.txt --expname fern_2v_sparse --datadir ./data/nerf_llff_data/fern_2v --N_iters 6000
+python run_nerf.py --config configs/sparsenerf.txt --expname fern_3v_sparse --datadir ./data/nerf_llff_data/fern_3v --N_iters 6000
+python run_nerf.py --config configs/sparsenerf.txt --expname fern_5v_sparse --datadir ./data/nerf_llff_data/fern_5v --N_iters 6000
+python run_nerf.py --config configs/sparsenerf.txt --expname fern_9v_sparse --datadir ./data/nerf_llff_data/fern_9v --N_iters 6000
 
-CUDA_VISIBLE_DEVICES=0 python run_nerf.py --config configs/chair.txt --finest_res 1024 
-CUDA_VISIBLE_DEVICES=1 python run_nerf.py --config configs/chair.txt --finest_res 1024 --lrate 0.01 --lrate_decay 100
-CUDA_VISIBLE_DEVICES=2 python run_nerf.py --config configs/chair.txt --finest_res 1024 --i_embed 0 --i_embed_views 0
-CUDA_VISIBLE_DEVICES=3 python run_nerf.py --config configs/chair.txt --finest_res 1024 --i_embed 0 --i_embed_views 0 --lrate 0.01 --lrate_decay 100
+python run_nerf.py --config configs/dsnerf.txt --expname fern_2v_ds --datadir ./data/nerf_llff_data/fern_2v --N_iters 6000
+python run_nerf.py --config configs/dsnerf.txt --expname fern_3v_ds --datadir ./data/nerf_llff_data/fern_3v --N_iters 6000
+python run_nerf.py --config configs/dsnerf.txt --expname fern_5v_ds --datadir ./data/nerf_llff_data/fern_5v --N_iters 6000
+python run_nerf.py --config configs/dsnerf.txt --expname fern_9v_ds --datadir ./data/nerf_llff_data/fern_9v --N_iters 6000
+
+python run_nerf.py --config configs/hashnerf.txt --expname fern_2v_hash --datadir ./data/nerf_llff_data/fern_2v --N_iters 6000
+python run_nerf.py --config configs/hashnerf.txt --expname fern_3v_hash --datadir ./data/nerf_llff_data/fern_3v --N_iters 6000
+python run_nerf.py --config configs/hashnerf.txt --expname fern_5v_hash --datadir ./data/nerf_llff_data/fern_5v --N_iters 6000
+python run_nerf.py --config configs/hashnerf.txt --expname fern_9v_hash --datadir ./data/nerf_llff_data/fern_9v --N_iters 6000
+
+python run_nerf.py --config configs/ddpnerf.txt --expname fern_2v_ddp --datadir ./data/nerf_llff_data/fern_2v --N_iters 6000
+python run_nerf.py --config configs/ddpnerf.txt --expname fern_3v_ddp --datadir ./data/nerf_llff_data/fern_3v --N_iters 6000
+python run_nerf.py --config configs/ddpnerf.txt --expname fern_5v_ddp --datadir ./data/nerf_llff_data/fern_5v --N_iters 6000
+python run_nerf.py --config configs/ddpnerf.txt --expname fern_9v_ddp --datadir ./data/nerf_llff_data/fern_9v --N_iters 6000

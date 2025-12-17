@@ -2,8 +2,9 @@ import numpy as np
 from pathlib import Path
 import os
 import matplotlib.pyplot as plt
+import sys
 project_root = Path(__file__).parent.parent
-
+sys.path.insert(0, str(project_root))
 
 def test_dpt_depth(dpt_path="data/nerf_llff_data/fern_5v/dpt_depths"):
     dir = os.path.join(project_root, dpt_path, '001.npy')

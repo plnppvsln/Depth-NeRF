@@ -13,6 +13,7 @@ from matplotlib import pyplot as plt
 img2mse = lambda x, y : torch.mean((x - y) ** 2)
 mse2psnr = lambda x : -10. * torch.log(x) / torch.log(torch.tensor([10.]))
 to8b = lambda x : (255*np.clip(x,0,1)).astype(np.uint8)
+to16b = lambda x : ((2**16 - 1) * np.clip(x,0,1)).astype(np.uint16)
 
 
 # Positional encoding (section 5.1)
@@ -39,7 +40,7 @@ class Embedder:
             
         for freq in freq_bands:
             for p_fn in self.kwargs['periodic_fns']:
-                embed_fns.append(lambda x, p_fn=p_fn, freq=freq : p_fn(x * freq))
+                embed_fns.append(lambda x, p_fn=p_fn, freq=freq : p_fn(x * freq)) #TODO
                 out_dim += d
                     
         self.embed_fns = embed_fns
@@ -78,7 +79,7 @@ def get_embedder(multires, args, i=0):
 
 # Model
 class NeRF(nn.Module):
-    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4], use_viewdirs=False):
+    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4], use_viewdirs=False): #input_ch_cam=0
         """ 
         """
         super(NeRF, self).__init__()
@@ -86,6 +87,7 @@ class NeRF(nn.Module):
         self.W = W
         self.input_ch = input_ch
         self.input_ch_views = input_ch_views
+        # self.input_ch_cam = input_ch_cam
         self.skips = skips
         self.use_viewdirs = use_viewdirs
         
@@ -93,7 +95,7 @@ class NeRF(nn.Module):
             [nn.Linear(input_ch, W)] + [nn.Linear(W, W) if i not in self.skips else nn.Linear(W + input_ch, W) for i in range(D-1)])
         
         ### Implementation according to the official code release (https://github.com/bmild/nerf/blob/master/run_nerf_helpers.py#L104-L105)
-        self.views_linears = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)])
+        self.views_linears = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)]) #TODO
 
         ### Implementation according to the paper
         # self.views_linears = nn.ModuleList(
@@ -343,10 +345,10 @@ def sample_pdf(bins, weights, N_samples, det=False, pytest=False):
 
     # Take uniform samples
     if det:
-        u = torch.linspace(0., 1., steps=N_samples)
+        u = torch.linspace(0., 1., steps=N_samples) # , device=bins.device
         u = u.expand(list(cdf.shape[:-1]) + [N_samples])
     else:
-        u = torch.rand(list(cdf.shape[:-1]) + [N_samples])
+        u = torch.rand(list(cdf.shape[:-1]) + [N_samples]) # , device=bins.device
 
     # Pytest, overwrite u with numpy's fixed random numbers
     if pytest:
@@ -379,6 +381,19 @@ def sample_pdf(bins, weights, N_samples, det=False, pytest=False):
 
     return samples
 
+def compute_weights(raw, z_vals, rays_d, noise=0.):
+    raw2alpha = lambda raw, dists, act_fn=F.relu: 1.-torch.exp(-act_fn(raw)*dists)
+
+    dists = z_vals[...,1:] - z_vals[...,:-1]
+    dists = torch.cat([dists, torch.full_like(dists[...,:1], 1e10)], -1)  # [N_rays, N_samples] TODO , device=device
+    dists = dists * torch.norm(rays_d[...,None,:], dim=-1)
+    
+    alpha = raw2alpha(raw[...,3] + noise, dists)  # [N_rays, N_samples]
+    # weights = alpha * tf.math.cumprod(1.-alpha + 1e-10, -1, exclusive=True)
+    weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)), 1.-alpha + 1e-10], -1), -1)[:, :-1] # TODO , device=device
+    return weights
+
+
 def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=False):
     """Transforms model's predictions to semantically meaningful values.
     Args:
@@ -392,19 +407,6 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
         weights: [num_rays, num_samples]. Weights assigned to each sampled color.
         depth_map: [num_rays]. Estimated distance to object.
     """
-    raw2alpha = lambda raw, dists, act_fn=F.relu: 1.-torch.exp(-act_fn(raw)*dists)
-
-    dists = z_vals[...,1:] - z_vals[...,:-1]
-    dists = torch.cat([dists, torch.tensor([1e10]).expand(dists[...,:1].shape)], -1)  # [N_rays, N_samples]
-
-    if torch.isnan(dists).any() or torch.isinf(dists).any():
-        print(f"1 [Numerical Error] dists contains nan or inf.")
-
-    dists = dists * torch.norm(rays_d[...,None,:], dim=-1)
-
-    if torch.isnan(dists).any() or torch.isinf(dists).any():
-        print(f"2 [Numerical Error] dists contains nan or inf.")
-
     rgb = torch.sigmoid(raw[...,:3])  # [N_rays, N_samples, 3]
     noise = 0.
     if raw_noise_std > 0.:
@@ -417,42 +419,37 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
             noise = torch.Tensor(noise)
 
     # sigma_loss = sigma_sparsity_loss(raw[...,3])
-    alpha = raw2alpha(raw[...,3] + noise, dists)  # [N_rays, N_samples]
-    if torch.isnan(alpha).any() or torch.isinf(alpha).any():
-        print(f"3 [Numerical Error] alpha contains nan or inf.")
 
-    # weights = alpha * tf.math.cumprod(1.-alpha + 1e-10, -1, exclusive=True)
-    weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)), 1.-alpha + 1e-10], -1), -1)[:, :-1]
-    if torch.isnan(weights).any() or torch.isinf(weights).any():
-        print(f"4 [Numerical Error] weights contains nan or inf.")
+    weights = compute_weights(raw, z_vals, rays_d, noise)
 
     rgb_map = torch.sum(weights[...,None] * rgb, -2)  # [N_rays, 3]
 
     depth_map = torch.sum(weights * z_vals, -1)
-    if torch.isnan(depth_map).any() or torch.isinf(depth_map).any():
-        print(f"5 [Numerical Error] depth_map contains nan or inf.")
-
-    # disp_map = 1./torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights, -1))
-
     acc_map = torch.sum(weights, -1)
     disp_map = acc_map / torch.max(1e-10 * torch.ones_like(depth_map), depth_map)
-
-    if torch.isnan(disp_map).any() or torch.isinf(disp_map).any():
-        print(f"6 [Numerical Error] disp_map contains nan or inf.")
-
-    # acc_map = torch.sum(weights, -1)
 
     if white_bkgd:
         rgb_map = rgb_map + (1.-acc_map[...,None])
 
-    # Calculate weights sparsity loss
-    # try:
-    #     entropy = Categorical(probs = torch.cat([weights, 1.0-weights.sum(-1, keepdim=True)+1e-6], dim=-1)).entropy()
-    # except:
-    #     pdb.set_trace()
-    # sparsity_loss = entropy
-
     return rgb_map, disp_map, acc_map, weights, depth_map #, sparsity_loss
+
+
+def perturb_z_vals(z_vals, pytest):
+    # get intervals between samples
+    mids = .5 * (z_vals[...,1:] + z_vals[...,:-1])
+    upper = torch.cat([mids, z_vals[...,-1:]], -1)
+    lower = torch.cat([z_vals[...,:1], mids], -1)
+    # stratified samples in those intervals
+    t_rand = torch.rand_like(z_vals)
+
+    # Pytest, overwrite u with numpy's fixed random numbers
+    if pytest:
+        np.random.seed(0)
+        t_rand = np.random.rand(*list(z_vals.shape))
+        t_rand = torch.Tensor(t_rand)
+
+    z_vals = lower + (upper - lower) * t_rand
+    return z_vals
 
 def sample_sigma(rays_o, rays_d, viewdirs, network, z_vals, network_query):
     # N_rays = rays_o.shape[0]

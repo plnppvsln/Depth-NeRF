@@ -78,7 +78,7 @@ def get_bbox3d_for_llff(poses, hwf, near=0.0, far=1.0, no_ndc=False):
     points = []
     poses = torch.FloatTensor(poses)
     for pose in poses:
-        rays_o, rays_d = get_rays(directions, pose.to('cuda:0'))
+        rays_o, rays_d = get_rays(directions.to('cuda:0'), pose.to('cuda:0'))
         if not no_ndc:
             rays_o, rays_d = get_ndc_rays(H, W, focal, 1.0, rays_o, rays_d)
 

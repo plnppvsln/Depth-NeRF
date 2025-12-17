@@ -1,5 +1,6 @@
 import numpy as np
 import os, imageio
+import torch
 
 from .utils import get_bbox3d_for_llff
 from pathlib import Path
@@ -7,6 +8,8 @@ from colmap_utils.read_write_model import *
 from colmap_utils.read_write_dense import *
 
 from utils.dpt_utils import load_dpt_model, predict_dpt_depth # for SparseNeRF
+
+import matplotlib.pyplot as plt
 
 ########## Slightly modified version of LLFF data loading code 
 ##########  see https://github.com/Fyusion/LLFF for original
@@ -411,59 +414,6 @@ def load_colmap_depth(basedir, factor=8, bd_factor=.75):
     np.save(data_file, data_list)
     return data_list
 
-def load_sensor_depth(basedir, factor=8, bd_factor=.75):
-    data_file = Path(basedir) / 'colmap_depth.npy'
-    
-    images = read_images_binary(Path(basedir) / 'sparse' / '0' / 'images.bin')
-    points = read_points3d_binary(Path(basedir) / 'sparse' / '0' / 'points3D.bin')
-
-    Errs = np.array([point3D.error for point3D in points.values()])
-    Err_mean = np.mean(Errs)
-    print("Mean Projection Error:", Err_mean)
-    
-    poses = get_poses(images)
-    _, bds_raw, _ = _load_data(basedir, factor=factor) # factor=8 downsamples original imgs by 8x
-    bds_raw = np.moveaxis(bds_raw, -1, 0).astype(np.float32)
-    # print(bds_raw.shape)
-    # Rescale if bd_factor is provided
-    sc = 1. if bd_factor is None else 1./(bds_raw.min() * bd_factor)
-    
-    near = np.ndarray.min(bds_raw) * .9 * sc
-    far = np.ndarray.max(bds_raw) * 1. * sc
-    print('near/far:', near, far)
-
-    depthfiles = [Path(basedir) / 'depth' / f for f in sorted(os.listdir(Path(basedir) / 'depth')) if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')]
-    depths = [imageio.imread(f) for f in depthfiles]
-    depths = np.stack(depths, 0)
-
-    data_list = []
-    for id_im in range(1, len(images)+1):
-        depth_list = []
-        coord_list = []
-        weight_list = []
-        for i in range(len(images[id_im].xys)):
-            point2D = images[id_im].xys[i]
-            id_3D = images[id_im].point3D_ids[i]
-            if id_3D == -1:
-                continue
-            point3D = points[id_3D].xyz
-            depth = (poses[id_im-1,:3,2].T @ (point3D - poses[id_im-1,:3,3])) * sc
-            if depth < bds_raw[id_im-1,0] * sc or depth > bds_raw[id_im-1,1] * sc:
-                continue
-            err = points[id_3D].error
-            weight = 2 * np.exp(-(err/Err_mean)**2)
-            depth_list.append(depth)
-            coord_list.append(point2D/factor)
-            weight_list.append(weight)
-        if len(depth_list) > 0:
-            print(id_im, len(depth_list), np.min(depth_list), np.max(depth_list), np.mean(depth_list))
-            data_list.append({"depth":np.array(depth_list), "coord":np.array(coord_list), "weight":np.array(weight_list)})
-        else:
-            print(id_im, len(depth_list))
-    # json.dump(data_list, open(data_file, "w"))
-    np.save(data_file, data_list)
-    return data_list
-
 def load_colmap_llff(basedir):
     basedir = Path(basedir)
 
@@ -477,8 +427,145 @@ def load_colmap_llff(basedir):
 
     return train_imgs, test_imgs, train_poses, test_poses, video_poses, depth_data, bds
 
+def load_colmap_sparse_depth(basedir, factor=8, bd_factor=.75):
+    """
+    Load sparse depth data from COLMAP reconstruction and create sparse depth images.
+    Supports both text (.txt) and binary (.bin) COLMAP files.
+
+    Creates sparse depth images where all pixels are black/invalid (depth=0)
+    except for pixels corresponding to COLMAP 3D points.
+
+    Args:
+        basedir: path to scene directory containing COLMAP data
+        factor: downsampling factor for coordinates
+        bd_factor: factor for scaling bounds
+
+    Returns:
+        tuple of (imgs, sparse_depth_images, valid_depth_images):
+        - imgs: RGB images tensor (N, H, W, 3) in [0,1] range
+        - sparse_depth_images: depth images tensor (N, H, W, 1) where only COLMAP points have depth values
+        - valid_depth_images: boolean masks tensor (N, H, W) indicating valid depth pixels
+    """
+    from pathlib import Path
+
+    images = read_images_binary(Path(basedir) / 'sparse' / '0' / 'images.bin')
+    points = read_points3d_binary(Path(basedir) / 'sparse' / '0' / 'points3D.bin')
+
+    Errs = np.array([point3D.error for point3D in points.values()])
+    Err_mean = np.mean(Errs)
+    print("Mean Projection Error:", Err_mean)
+
+    # Get poses from images
+    poses = get_poses(images)
+
+    # Try to load image dimensions from LLFF format
+    _ , bds_raw, imgs = _load_data(basedir, factor=factor)
+    imgs = np.moveaxis(imgs, -1, 0).astype(np.float32)  # (N, H, W, 3)
+    bds_raw = np.moveaxis(bds_raw, -1, 0).astype(np.float32)
+    sc = 1. if bd_factor is None else 1./(bds_raw.min() * bd_factor)
+    near = np.ndarray.min(bds_raw) * .9 * sc
+    far = np.ndarray.max(bds_raw) * 1. * sc
+
+    # Get image dimensions
+    img0 = [os.path.join(basedir, 'images', f) for f in sorted(os.listdir(os.path.join(basedir, 'images'))) \
+            if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')][0]
+    sh = imageio.imread(img0).shape
+    H, W = sh[:2]
+
+    # Apply downsampling factor
+    H_down = H // factor
+    W_down = W // factor
+
+
+    # print(f'Image size: {H_down}x{W_down}, near/far: {near}, {far}')
+
+    # Get sorted image IDs
+    image_ids = sorted(images.keys())
+
+    sparse_depth_images = []
+    valid_depth_images = []
+    for idx, image_id in enumerate(image_ids):
+        # Create empty sparse depth image (all zeros = invalid)
+        sparse_depth = np.zeros((H_down, W_down), dtype=np.float32)
+        valid_depth = np.zeros((H_down, W_down), dtype=bool)
+
+        image = images[image_id]
+        pose = poses[idx]
+
+        num_valid_points = 0
+
+        # For each 2D point in this image
+        for i in range(len(image.xys)):
+            point2D = image.xys[i]
+            id_3D = image.point3D_ids[i]
+
+            if id_3D == -1:  # No corresponding 3D point
+                continue
+
+            point3D = points[id_3D].xyz
+
+            # Compute depth using camera pose
+            # Transform 3D point to camera coordinates
+            point3D_homo = np.append(point3D, 1.0)
+            cam_coords = pose @ point3D_homo
+            depth = cam_coords[2] * sc  # Z coordinate is depth
+
+            # Filter by depth bounds
+            if depth < near or depth > far:
+                continue
+
+            # Get pixel coordinates (scale by factor)
+            x, y = point2D / factor
+
+            # Round to nearest pixel and check bounds
+            x_int = int(np.round(x))
+            y_int = int(np.round(y))
+
+            if 0 <= x_int < W_down and 0 <= y_int < H_down:
+                sparse_depth[y_int, x_int] = depth
+                valid_depth[y_int, x_int] = True
+                num_valid_points += 1
+
+        print(f"{image_id} {image.name}: {num_valid_points} sparse points")
+        # plt.imshow(image)
+        # plt.show()
+        sparse_depth_images.append(sparse_depth)
+        valid_depth_images.append(valid_depth)
+
+    # Stack into arrays
+    sparse_depth_images = np.stack(sparse_depth_images, axis=0)  # (N, H, W)
+    sparse_depth_images = sparse_depth_images[..., np.newaxis]  # (N, H, W, 1)
+    valid_depth_images = np.stack(valid_depth_images, axis=0)  # (N, H, W)
+
+    # Convert to tensors
+    imgs = torch.from_numpy(imgs)
+    sparse_depth_images = torch.from_numpy(sparse_depth_images)
+    valid_depth_images = torch.from_numpy(valid_depth_images)
+
+    # Save sparse depth images
+    sparse_depth_dir = Path(basedir) / 'sparse_depth'
+    sparse_depth_dir.mkdir(exist_ok=True)
+
+    for idx, (image_id, sparse_depth) in enumerate(zip(image_ids, sparse_depth_images)):
+        image = images[image_id]
+        # Create filename based on image name (compatible with depth completion pipeline)
+        depth_filename = Path(image.name).stem + '.png'
+        depth_path = sparse_depth_dir / depth_filename
+
+        # Convert to 16-bit PNG format as expected by depth completion pipeline
+        # Scale depth to 16-bit range (multiply by scaling factor)
+        depth_16bit = (sparse_depth.squeeze().numpy() * 1000).astype(np.uint16)  # 1000 is common scaling factor
+        import cv2
+        cv2.imwrite(str(depth_path), depth_16bit)
+
+    print(f"Saved {len(sparse_depth_images)} sparse depth images to {sparse_depth_dir}")
+
+    return imgs, sparse_depth_images, valid_depth_images
+
 # for SparseNeRF:
 _dpt_model_cache = None
+
+
 
 def load_dpt_for_scene(basedir, images, factor=8):
     """
@@ -502,7 +589,7 @@ def load_dpt_for_scene(basedir, images, factor=8):
             dpt = np.load(dpt_path)
         else:
             # Восстановить оригинальный размер
-            img_full = img 
+            img_full = img
             dpt = predict_dpt_depth(_dpt_model_cache, img_full, (H, W))
             np.save(dpt_path, dpt)
         dpt_depths.append(dpt)

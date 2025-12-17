@@ -6,6 +6,7 @@
 ## Participants
 - Artyom Oganesyan
 - Polina Popova
+- Semynin Alexander
 
 ## Research Overview
 
@@ -40,12 +41,11 @@ All methods share the same ray sampling, network architecture (except hash encod
 
 Below are the qualitative and quantitative results obtained on the **LLFF `fern` scene with only 3 input views**.
 
-#TODO вставить картинку и видио и обновиь таблицу
+> These are preliminary results, final testing is currently underway, after which an update will be provided.
 
 ### Demonstration Video
 
-
-
+![preliminary results](results/first.gif)
 
 ### Metrics
 
