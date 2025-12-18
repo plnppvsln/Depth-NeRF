@@ -6,7 +6,7 @@
 ## Participants
 - Artyom Oganesyan
 - Polina Popova
-- Semynin Aleksander
+- Semynin Aleksandr
 
 ## Research Overview
 
