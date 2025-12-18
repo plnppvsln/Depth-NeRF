@@ -60,6 +60,8 @@ Results with 3 views for HashNeRF, DS-NeRF, SparseNeRF and DDP-NeRF(from left to
 
 ### Metrics
 
+### Training took about 60 hours (calculated by Kaggle hours remained)
+
 All results are evaluated on test views using standard metrics.
 
 ### PSNR (dB) ↑ - Higher is Better
