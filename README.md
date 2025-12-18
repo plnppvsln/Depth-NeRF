@@ -33,20 +33,23 @@ We compare **two distinct depth integration strategies**, all implemented within
 - **Implementation**: No explicit depth loss; geometry emerges from high-frequency encoding + sparse views.
 - **Note**: Serves as a strong **depth-free baseline** to assess the true value of depth signals.
 
+#### 4. **DDP-NeRF (Dense Depth Priors with Uncertainty)**
+- **Idea** Leverages dense depth priors with uncertainty estimates derived from sparse SfM reconstructions to guide NeRF optimization.
+- **Implementation**: Uses a depth completion network to convert sparse SfM points into dense depth maps with per-pixel uncertainty; incorporates both as constraints during training via Gaussian negative log likelihood loss and uncertainty-aware sampling.
+- **Advantage**: More robust to SfM outliers and sparse input views; provides better geometry recovery in textureless regions while maintaining flexibility where depth estimates are uncertain.
+
 All methods share the same ray sampling, network architecture (except hash encoding), and dataset preprocessing — ensuring a controlled comparison.
 
 ---
 
 ## Results
 
-Below are the qualitative and quantitative results obtained on the **LLFF `fern` scene with only 3 input views**.
+Below are the qualitative and quantitative results obtained on the our custom dataset with different input views.
 
-> These are preliminary results, final testing is currently underway, after which an update will be provided.
+Results with 3 views for HashNeRF, DS-NeRF, SparseNeRF  (from left to right)
+![preliminary results](results/cowork2_3v.gif)
 
-### Demonstration Video
-
-![preliminary results](results/first.gif)
-
+![preliminary results](results/cowork2_3v.gif)
 ### Metrics
 
 | Method        | PSNR ↑ | SSIM ↑ | LPIPS ↓ | Training Time (1k iters) |
@@ -54,6 +57,7 @@ Below are the qualitative and quantitative results obtained on the **LLFF `fern`
 | SparseNeRF    | 22.1   | 0.85   | 0.12    | 18 min                   |
 | DS-NeRF       | 23.4   | 0.88   | 0.10    | 20 min                   |
 | HashNeRF      | 20.7   | 0.82   | 0.15    | 12 min                   |
+| DDP-NeRF      | 20.7   | 0.82   | 0.15    | 12 min                   |
 
 ---
 ## Project Structure
@@ -61,6 +65,7 @@ Below are the qualitative and quantitative results obtained on the **LLFF `fern`
 Depth-NeRF/
 │
 ├── README.md                              ← Full project documentation
+├── render.sh                              ← Rendering script
 ├── requirements.txt                       ← Python dependencies 
 ├── .gitignore                             ← Excludes logs, cache, weights, IDE files
 ├── train.sh                               ← Training script
@@ -285,7 +290,8 @@ The script will automatically skip COLMAP if the sparse reconstruction already e
 
 **Note:** COLMAP may not be able to register all images in your dataset (e.g., due to insufficient features, poor image quality, or lack of overlap). The pose processing pipeline has been updated to handle this gracefully by using only the images that were successfully registered by COLMAP. The `view_imgs.txt` file contains the list of images that were successfully processed, and the `poses_bounds.npy` file will only contain poses for these registered images. This prevents errors when some images are missing from the COLMAP reconstruction.
 
-3. **Train & Render Methods**
+3. **Train & Render Methods**:
+
 **SparseNeRF:**
 ```bash
 python run_nerf.py --config configs/fern_3v.txt \
@@ -295,14 +301,18 @@ python run_nerf.py --config configs/fern_3v.txt \
 ```
 **DSNeRF:**
 ```bash
-python run_nerf.py --config configs/fern_3v_ds.txt \
+python run_nerf.py --config configs/fern_3v_dsnerf.txt \
   --finest_res 1024 --log2_hashmap_size 19 --lrate 0.01 \
   --lrate_decay 10 --render_factor 8 --i_video 1000
   ```
 **HashNeRF:**
 ```bash
-python run_nerf.py --config configs/fern_3v_hash.txt \
+python run_nerf.py --config configs/fern_3v.txt \
   --render_factor 8 --i_video 1000
 ```
+**DDP-NeRF:**
+```bash
+python run_nerf.py --config configs/fern_3v.txt --no_batching --use_dd
+```
 
-> Outputs (videos, depth maps, logs) are saved in logs/ by default. Use the provided compare_all_methods.py script (in scripts/) to automate comparison. 
+> Outputs (videos, depth maps, logs) are saved in logs/ by default. 
