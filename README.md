@@ -46,13 +46,21 @@ All methods share the same ray sampling, network architecture (except hash encod
 
 Below are the qualitative and quantitative results obtained on the our custom dataset with different input views.
 
-Results with 3 views for HashNeRF, DS-NeRF, SparseNeRF  (from left to right)
-![preliminary results](results/cowork2_3v.gif)
+Results with 3 views for HashNeRF, DS-NeRF, SparseNeRF and DDP-NeRF(from left to right)
+<div align="center">
+  <img src="results/cowork2_3v.gif" alt="3-view reconstruction comparison" width="100%" style="border:1px solid #ddd; border-radius:4px; padding:5px; margin:10px 0;">
+  <br>
+  <em>Comparison of different methods trained with only 3 input views</em>
+</div>
+<div align="center">
+  <img src="results/cowork9.gif" alt="3-view reconstruction comparison" width="100%" style="border:1px solid #ddd; border-radius:4px; padding:5px; margin:10px 0;">
+  <br>
+  <em>Comparison of different methods trained with 9 input views</em>
+</div>
 
-![preliminary results](results/cowork2_3v.gif)
 ### Metrics
 
-| Method        | PSNR ↑ | SSIM ↑ | LPIPS ↓ | Training Time (1k iters) |
+| Method        | PSNR ↑ | SSIM ↑ | LPIPS ↓ | Training Time (6k iters) |
 |---------------|--------|--------|---------|--------------------------|
 | SparseNeRF    | 22.1   | 0.85   | 0.12    | 18 min                   |
 | DS-NeRF       | 23.4   | 0.88   | 0.10    | 20 min                   |
