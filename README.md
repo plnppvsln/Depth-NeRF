@@ -65,10 +65,10 @@ All results are evaluated on test views using standard metrics.
 ### PSNR (dB) ↑ - Higher is Better
 | Method       | 2 Views | 3 Views | 5 Views | 9 Views |
 |--------------|---------|---------|---------|---------|
-| **HashNeRF**     | 23.43   | 23.47   | 24.35   | 24.32   |
-| **DS-NeRF**      | 23.03   | 23.16   | 24.04   | 23.96   |
-| **SparseNeRF**   | **24.19**   | 23.92   | **25.68**   | 24.72   |
-| **DDP-NeRF**     | 20.89   | 22.40   | 24.71   | 23.73   |
+| **HashNeRF**     | 14.43   | 23.47   | 24.35   | 24.32   |
+| **DS-NeRF**      | 20.73   | 23.16   | 24.04   | 23.96   |
+| **SparseNeRF**   | 16.19   | 23.92   | **25.68**   | 24.72   |
+| **DDP-NeRF**     | **21.89**   | 22.40   | 24.71   | 23.73   |
 
 ### SSIM ↑ - Higher is Better  
 | Method       | 2 Views | 3 Views | 5 Views | 9 Views |
