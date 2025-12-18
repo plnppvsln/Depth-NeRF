@@ -81,12 +81,10 @@ All results are evaluated on test views using standard metrics.
 ### LPIPS ↓ - Lower is Better
 | Method       | 2 Views | 3 Views | 5 Views | 9 Views |
 |--------------|---------|---------|---------|---------|
-| HashNeRF     | 0.5195  | 0.8502  | 0.8651  | 0.8647  |
-| DS-NeRF      | 0.6453  | 0.8517  | 0.8641  | 0.8593  |
-| SparseNeRF   | 0.5294  | 0.8528  | 0.8626  | 0.8586  |
-| DDP-NeRF     | 0.6644  | 0.8367  | 0.8713  | 0.8588  |
-
-
+| HashNeRF     | 0.775  | 0.6782  | 0.532  | 0.3545  |
+| DS-NeRF      | 0.414  | 0.3859  | 0.3524  | 0.314  |
+| SparseNeRF   | 0.734  | 0.5959  | 0.4040  | 0.2947  |
+| DDP-NeRF     | 0.453  | 0.405  | 0.3863  | 0.2876  |
 
 ---
 
