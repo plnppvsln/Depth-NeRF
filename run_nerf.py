@@ -28,6 +28,7 @@ from load_dataset.LINEMOD import load_LINEMOD_data # Возможно вообщ
 from load_dataset.nerf_style import load_nerf_style
 
 from losses.sparse_depth_loss import local_depth_ranking_loss, spatial_continuity_loss # SparseNeRF depth ranking and continuity losses
+from ddp.utils import *
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 np.random.seed(0)
@@ -62,12 +63,12 @@ def run_network(inputs, viewdirs, fn, embed_fn, embeddirs_fn, netchunk=1024*64):
     return outputs
 
 
-def batchify_rays(rays_flat, chunk=1024*32, **kwargs):
+def batchify_rays(rays_flat, chunk=1024*32, use_viewdirs=False, **kwargs):
     """Render rays in smaller minibatches to avoid OOM.
     """
     all_ret = {}
     for i in range(0, rays_flat.shape[0], chunk):
-        ret = render_rays(rays_flat[i:i+chunk], **kwargs)
+        ret = render_rays(rays_flat[i:i+chunk], use_viewdirs, **kwargs)
         for k in ret:
             if k not in all_ret:
                 all_ret[k] = []
@@ -79,7 +80,7 @@ def batchify_rays(rays_flat, chunk=1024*32, **kwargs):
 
 def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
                   near=0., far=1.,
-                  use_viewdirs=False, c2w_staticcam=None, depths=None,
+                  use_viewdirs=False, c2w_staticcam=None, rays_depth=None,
                   **kwargs):
     """Render rays
     Args:
@@ -108,9 +109,12 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
     if c2w is not None:
         # special case to render full image
         rays_o, rays_d = get_rays(H, W, K, c2w)
-    else:
+    elif rays.shape[0] == 2:
         # use provided ray batch
         rays_o, rays_d = rays
+    else:
+        # use provided ray batch
+        rays_o, rays_d, rays_depth = rays
 
     if use_viewdirs:
         # provide ray directions as input
@@ -132,13 +136,14 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
 
     near, far = near * torch.ones_like(rays_d[...,:1]), far * torch.ones_like(rays_d[...,:1])
     rays = torch.cat([rays_o, rays_d, near, far], -1)
-    if depths is not None:
-        rays = torch.cat([rays, depths.reshape(-1,1)], -1)
     if use_viewdirs:
         rays = torch.cat([rays, viewdirs], -1)
+    if rays_depth is not None:
+        rays_depth = torch.reshape(rays_depth, [-1,3]).float()
+        rays = torch.cat([rays, rays_depth], -1)
 
     # Render and reshape
-    all_ret = batchify_rays(rays, chunk, **kwargs)
+    all_ret = batchify_rays(rays, chunk, use_viewdirs, **kwargs)
     for k in all_ret:
         k_sh = list(sh[:-1]) + list(all_ret[k].shape[1:])
         all_ret[k] = torch.reshape(all_ret[k], k_sh)
@@ -273,11 +278,15 @@ def create_nerf(args):
                         geo_feat_dim=15,
                         num_layers_color=3,
                         hidden_dim_color=64,
-                        input_ch=input_ch, input_ch_views=input_ch_views).to(device)
+                        input_ch=input_ch, input_ch_views=input_ch_views)
     else:
         model = NeRF(D=args.netdepth, W=args.netwidth,
                  input_ch=input_ch, output_ch=output_ch, skips=skips,
-                 input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
+                 input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs)
+    if args.multi_gpu:
+        model = nn.DataParallel(model).to(device)
+    else:
+        model = model.to(device)
     grad_vars = list(model.parameters())
 
     model_fine = None
@@ -289,17 +298,21 @@ def create_nerf(args):
                         geo_feat_dim=15,
                         num_layers_color=3,
                         hidden_dim_color=64,
-                        input_ch=input_ch, input_ch_views=input_ch_views).to(device)
+                        input_ch=input_ch, input_ch_views=input_ch_views)
         else:
             model_fine = NeRF(D=args.netdepth_fine, W=args.netwidth_fine,
                           input_ch=input_ch, output_ch=output_ch, skips=skips,
-                          input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
+                          input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs)
+        if args.multi_gpu:
+            model_fine = nn.DataParallel(model_fine).to(device)
+        else:
+            model = model.to(device)
         grad_vars += list(model_fine.parameters())
 
     network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn,
                                                                 embed_fn=embed_fn,
                                                                 embeddirs_fn=embeddirs_fn,
-                                                                netchunk=args.netchunk)
+                                                                netchunk=args.netchunk*args.n_gpus)
 
     # Create optimizer
     if args.i_embed==1:
@@ -368,9 +381,11 @@ def create_nerf(args):
 
 
 def render_rays(ray_batch,
+                use_viewdirs,
                 network_fn,
                 network_query_fn,
                 N_samples,
+                precomputed_z_samples=None,
                 embed_fn=None,
                 retraw=False,
                 lindisp=False,
@@ -414,12 +429,51 @@ def render_rays(ray_batch,
     """
     N_rays = ray_batch.shape[0]
     rays_o, rays_d = ray_batch[:,0:3], ray_batch[:,3:6] # [N_rays, 3] each
-    viewdirs = ray_batch[:,-3:] if ray_batch.shape[-1] > 8 else None
+    viewdirs = None
+    depth_range = None
+    if use_viewdirs:
+        viewdirs = ray_batch[:,8:11]
+        if ray_batch.shape[-1] > 11:
+            depth_range = ray_batch[:,11:14]
+    else:
+        if ray_batch.shape[-1] > 8:
+            depth_range = ray_batch[:,8:11]
     bounds = torch.reshape(ray_batch[...,6:8], [-1,1,2])
     near, far = bounds[...,0], bounds[...,1] # [-1,1]
-
     t_vals = torch.linspace(0., 1., steps=N_samples)
-    if not lindisp:
+
+    # This will work only for ddp
+    # sample and render rays for dense depth priors for nerf
+    N_samples_half = N_samples // 2
+    if precomputed_z_samples is not None:
+        # compute a lower bound for the sampling standard deviation as the maximal distance between samples
+        lower_bound = precomputed_z_samples[-1] - precomputed_z_samples[-2]
+    # train time: use precomputed samples along the whole ray and additionally sample around the depth
+    if depth_range is not None:
+        valid_depth = depth_range[:,0] >= near[0, 0]
+        invalid_depth = valid_depth.logical_not()
+        # do a forward pass for the precomputed first half of samples
+        z_vals = precomputed_z_samples.unsqueeze(0).expand((N_rays, N_samples_half))
+        if perturb > 0.:
+            z_vals = perturb_z_vals(z_vals, pytest)
+        pts = rays_o[...,None,:] + rays_d[...,None,:] * z_vals[...,:,None]
+        raw = network_query_fn(pts, viewdirs, network_fn)
+        z_vals_2 = torch.empty_like(z_vals)
+        # sample around the predicted depth from the first half of samples, if the input depth is invalid
+        z_vals_2[invalid_depth] = compute_samples_around_depth(raw.detach()[invalid_depth], z_vals[invalid_depth], rays_d[invalid_depth], N_samples_half, perturb, lower_bound, near[0, 0], far[0, 0])
+        # sample with in 3 sigma of the input depth, if it is valid
+        z_vals_2[valid_depth] = sample_3sigma(depth_range[valid_depth, 1], depth_range[valid_depth, 2], N_samples_half, perturb == 0., near[0, 0], far[0, 0])
+        return forward_with_additonal_samples(z_vals, raw, z_vals_2, rays_o, rays_d, viewdirs, network_fn, network_query_fn, raw_noise_std, pytest)
+    # test time: use precomputed samples along the whole ray and additionally sample around the predicted depth from the first half of samples
+    elif precomputed_z_samples is not None:
+        z_vals = precomputed_z_samples.unsqueeze(0).expand((N_rays, N_samples_half))
+        pts = rays_o[...,None,:] + rays_d[...,None,:] * z_vals[...,:,None]
+        raw = network_query_fn(pts, viewdirs, network_fn)
+        z_vals_2 = compute_samples_around_depth(raw, z_vals, rays_d, N_samples_half, perturb, lower_bound, near[0, 0], far[0, 0])
+        return forward_with_additonal_samples(z_vals, raw, z_vals_2, rays_o, rays_d, viewdirs, network_fn, network_query_fn, raw_noise_std, pytest)
+
+    # sample and render rays for nerf
+    elif not lindisp:
         z_vals = near * (1.-t_vals) + far * (t_vals)
     else:
         z_vals = 1./(1./near * (1.-t_vals) + 1./far * (t_vals))
@@ -427,20 +481,7 @@ def render_rays(ray_batch,
     z_vals = z_vals.expand([N_rays, N_samples])
 
     if perturb > 0.:
-        # get intervals between samples
-        mids = .5 * (z_vals[...,1:] + z_vals[...,:-1])
-        upper = torch.cat([mids, z_vals[...,-1:]], -1)
-        lower = torch.cat([z_vals[...,:1], mids], -1)
-        # stratified samples in those intervals
-        t_rand = torch.rand(z_vals.shape) # .to(device) ?
-
-        # Pytest, overwrite u with numpy's fixed random numbers
-        if pytest:
-            np.random.seed(0)
-            t_rand = np.random.rand(*list(z_vals.shape))
-            t_rand = torch.Tensor(t_rand)
-
-        z_vals = lower + (upper - lower) * t_rand
+        z_vals = perturb_z_vals(z_vals, pytest)
 
     pts = rays_o[...,None,:] + rays_d[...,None,:] * z_vals[...,:,None] # [N_rays, N_samples, 3]
 
@@ -449,7 +490,7 @@ def render_rays(ray_batch,
 
     if N_importance > 0:
 
-        rgb_map_0, disp_map_0, depth_map_0, acc_map_0 = rgb_map, disp_map, depth_map, acc_map
+        rgb_map_0, disp_map_0, depth_map_0, acc_map_0, z_vals_0, weights_0 = rgb_map, disp_map, depth_map, acc_map, z_vals, weights
 
         z_vals_mid = .5 * (z_vals[...,1:] + z_vals[...,:-1])
         z_samples = sample_pdf(z_vals_mid, weights[...,1:-1], N_importance, det=(perturb==0.), pytest=pytest)
@@ -464,7 +505,7 @@ def render_rays(ray_batch,
 
         rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
 
-    ret = {'rgb_map' : rgb_map, 'disp_map' : disp_map, 'depth_map' : depth_map, 'acc_map' : acc_map}
+    ret = {'rgb_map' : rgb_map, 'disp_map' : disp_map, 'depth_map' : depth_map, 'acc_map' : acc_map, 'z_vals' : z_vals, 'weights' : weights}
     if retraw:
         ret['raw'] = raw
     if N_importance > 0:
@@ -473,6 +514,8 @@ def render_rays(ray_batch,
         ret['depth0'] = depth_map_0
         ret['acc0'] = acc_map_0
         # ret['sparsity_loss0'] = sparsity_loss_0
+        ret['z_vals0'] = z_vals_0
+        ret['weights0'] = weights_0
         ret['z_std'] = torch.std(z_samples, dim=-1, unbiased=False)  # [N_rays]
 
     if sigma_loss is not None and ray_batch.shape[-1] > 11:
@@ -558,6 +601,8 @@ def config_parser():
                         help='number of steps to train on central crops')
     parser.add_argument("--precrop_frac", type=float,
                         default=.5, help='fraction of img taken for central crops')
+    parser.add_argument("--multi_gpu", action='store_true',
+                        help='will use multiple gpu\'s if possible')
 
     # dataset options
     parser.add_argument("--dataset_type", type=str, default='llff',
@@ -607,8 +652,6 @@ def config_parser():
                         help='finest resolultion for hashed embedding')
     parser.add_argument("--log2_hashmap_size",   type=int, default=19,
                         help='log2 of hashmap size')
-    # parser.add_argument("--sparse-loss-weight", type=float, default=1e-10,
-    #                     help='learning rate')
     parser.add_argument("--tv-loss-weight", type=float, default=1e-6,
                         help='learning rate')
 
@@ -654,6 +697,17 @@ def config_parser():
     parser.add_argument("--lambda_cont", type=float, default=0.02,
                         help="Weight for spatial continuity loss")
 
+    #SparseNerf paramenters parser
+    parser.add_argument("--use_ddp", action='store_true',
+                    help="Use DDP method for sampling")
+    parser.add_argument("--ddp_depth_loss_weight", type=float, default=0.004,
+                        help='weight of the depth loss, values <=0 do not apply depth loss')
+    parser.add_argument("--invalidate_large_std_threshold", type=float, default=1.,
+                        help='invalidate completed depth values with standard deviation greater than threshold in m, \
+                            thresholds <=0 deactivate invalidation')
+    parser.add_argument("--save_depth_completion_dir", type=str, default=None,
+                        help='path to save ddp depth completion (None by default)')
+
     return parser
 
 
@@ -662,11 +716,17 @@ def train():
     parser = config_parser()
     args = parser.parse_args()
 
+    # Multi-GPU
+    args.n_gpus = torch.cuda.device_count()
+    print(f"Using {args.n_gpus} GPU(s).")
+
     # Load data
     K = None
     if args.dataset_type == 'llff':
         if args.colmap_depth:
             depth_gts = load_colmap_depth(args.datadir, factor=args.factor, bd_factor=.75)
+        if args.use_ddp:
+            dense_depths, valid_depths = load_ddp_depths(args.datadir, factor=args.factor, bd_factor=.75, save_dir=args.save_depth_completion_dir)
         images, poses, render_poses, i_test, bounding_box, near, far, dpt_depths = load_llff_data(args.datadir, args.factor,
                                                                                       recenter=True, bd_factor=.75,
                                                                                       spherify=args.spherify,
@@ -813,8 +873,27 @@ def train():
         'near' : near,
         'far' : far,
     }
+
+    if args.use_ddp and args.ddp_depth_loss_weight > 0.:
+        precomputed_z_samples = precompute_quadratic_samples(near, far, args.N_samples // 2)
+
+        if precomputed_z_samples.shape[0] % 2 == 1:
+            precomputed_z_samples = precomputed_z_samples[:-1]
+
+        print("Computed {} samples between {} and {}".format(precomputed_z_samples.shape[0], precomputed_z_samples[0], precomputed_z_samples[-1]))
+    else:
+        precomputed_z_samples = None
+
+    scene_sample_params = {
+        'precomputed_z_samples' : precomputed_z_samples,
+    }
+
+
     render_kwargs_train.update(bds_dict)
     render_kwargs_test.update(bds_dict)
+
+    render_kwargs_train.update(scene_sample_params)
+    render_kwargs_test.update(scene_sample_params)
 
     # Move testing data to GPU
     render_poses = torch.Tensor(render_poses).to(device)
@@ -838,12 +917,12 @@ def train():
             os.makedirs(testsavedir, exist_ok=True)
             tqdm.write(f"[RENDER ONLY] Test poses shape: {render_poses.shape}")
             # TODO DS nerf uses render_test_ray() here 
-            rgbs, depths, disps = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor)
+            rgbs, pred_depths, disps = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor)
             tqdm.write(f"[RENDER ONLY] Done rendering {testsavedir}")
             imageio.mimwrite(os.path.join(testsavedir, 'rgb.mp4'), to8b(rgbs), fps=30, quality=8)
             # disps[np.isnan(disps)] = 0
-            print('Depth stats', np.mean(depths), np.max(depths), np.percentile(depths, 95))
-            imageio.mimwrite(os.path.join(testsavedir, 'depth.mp4'), to8b(depths / np.percentile(depths, 95)), fps=30, quality=8)
+            print('Depth stats', np.mean(pred_depths), np.max(pred_depths), np.percentile(pred_depths, 95))
+            imageio.mimwrite(os.path.join(testsavedir, 'depth.mp4'), to8b(pred_depths / np.percentile(pred_depths, 95)), fps=30, quality=8)
 
             return
     
@@ -898,6 +977,11 @@ def train():
     # Move training data to GPU
     images = torch.Tensor(images).to(device)
 
+    # DDP
+    if args.use_ddp:
+        dense_depths = dense_depths.to(device)
+        valid_depths = valid_depths.to(device)
+
     #SparseNerf
     if args.use_dpt_ranking:
         dpt_depths = [torch.from_numpy(d).to(device) for d in dpt_depths]  # list of [H,W]
@@ -942,6 +1026,9 @@ def train():
         if use_batching:
             # Random over all images
             # batch = rays_rgb[i_batch:i_batch+N_rand] # [B, 2+1, 3*?]
+            if args.use_dpt_ranking:
+                if not args.no_batching:
+                    raise NotImplementedError("DDPNeRF sampling requires --no_batching.")
             try:
                 batch = next(raysRGB_iter).to(device)
             except StopIteration:
@@ -981,7 +1068,12 @@ def train():
             # Random from one image
             img_i = np.random.choice(i_train)
             target = images[img_i]
-            # target = torch.Tensor(target).to(device)# TODO 
+            # target = torch.Tensor(target).to(device)# TODO
+
+            if args.use_ddp and args.ddp_depth_loss_weight > 0.:
+                target_depth = dense_depths[img_i]
+                target_valid_depth = valid_depths[img_i]
+
             pose = poses[img_i, :3,:4]
 
             if N_rgb is not None:
@@ -1011,8 +1103,19 @@ def train():
                 select_coords = coords[select_inds].long()  # (N_rand, 2)
                 rays_o = rays_o[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
                 rays_d = rays_d[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
-                batch_rays = torch.stack([rays_o, rays_d], 0)
+                # batch_rays = torch.stack([rays_o, rays_d], 0)
                 target_s = target[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+
+                # This ensures select_coords is on the same device 
+                # as target_depth and target_valid_depth before indexing.
+                select_coords = select_coords
+                if args.use_ddp and args.ddp_depth_loss_weight > 0.:
+                    target_d = target_depth[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 1) or (N_rand, 2)
+                    target_vd = target_valid_depth[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 1)
+                    depth_range = precompute_depth_sampling(target_d)
+                    batch_rays = torch.stack([rays_o, rays_d, depth_range], 0)  # (3, N_rand, 3)
+                else:
+                    batch_rays = torch.stack([rays_o, rays_d], 0)  # (2, N_rand, 3)
 
             if args.colmap_depth:
                 # Get depth data for the selected image
@@ -1079,8 +1182,14 @@ def train():
                 ranking_loss = local_depth_ranking_loss(depth, dpt_map.cpu().numpy(), coords=select_coords.cpu().numpy())
                 continuity_loss = spatial_continuity_loss(depth, dpt_map.cpu().numpy(), coords=select_coords.cpu().numpy())
 
+
         optimizer.zero_grad()
         img_loss = img2mse(rgb, target_s)
+        
+        # Compute DDPNeRF losses using DDP
+        ddp_loss = 0.0
+        if args.use_ddp and args.ddp_depth_loss_weight > 0.:
+            ddp_loss = compute_ddp_depth_loss(depth, extras['z_vals'], extras['weights'], target_d, target_vd)
         
         # Depth loss calculation
         depth_loss_value = 0.0
@@ -1099,21 +1208,17 @@ def train():
                 ray_weights=ray_weights if args.weighted_loss else None,
                 max_depth=max_depth if args.normalize_depth else None
             )
-            # if torch.isnan(depth_loss_value):
-            #     tqdm.write(f"[ERROR] NaN detected in depth_loss_value at iteration {i}")
-            #     tqdm.write(f"  depth_col stats: min={depth_col.min().item():.6f}, max={depth_col.max().item():.6f}, mean={depth_col.mean().item():.6f}")
-            #     tqdm.write(f"  target_depth stats: min={target_depth.min().item():.6f}, max={target_depth.max().item():.6f}, mean={target_depth.mean().item():.6f}")
-            #     if args.normalize_depth and max_depth is not None:
-            #         tqdm.write(f"  max_depth: {max_depth}")
-        
+
         sigma_loss = 0
         if args.sigma_loss:
             sigma_loss = extras_col['sigma_loss'].mean()
             # print(sigma_loss)
-        trans = extras['raw'][...,-1]
+        # trans = extras['raw'][...,-1]
         if args.use_dpt_ranking:
             # SparseNeRF mode: only RGB + ranking + continuity losses
             loss = img_loss + args.lambda_rank * ranking_loss + args.lambda_cont * continuity_loss
+        elif args.use_ddp:
+            loss = img_loss + args.ddp_depth_loss_weight * ddp_loss
         else:
             # DSNeRF mode
             loss = img_loss + args.depth_lambda * depth_loss_value + args.sigma_lambda * sigma_loss
@@ -1126,7 +1231,7 @@ def train():
             psnr0 = mse2psnr(img_loss0)
 
         # sparsity_loss = args.sparse_loss_weight*(extras["sparsity_loss"].sum() + extras["sparsity_loss0"].sum())
-        loss = loss# + sparsity_loss
+        # loss = loss + sparsity_loss
 
         # add Total Variation loss
         if args.i_embed==1:
@@ -1141,18 +1246,6 @@ def train():
             loss = loss + args.tv_loss_weight * TV_loss
             if i>1000:
                 args.tv_loss_weight = 0.0
-        
-        # # Final check for NaN in total loss
-        # if torch.isnan(loss):
-        #     tqdm.write(f"[CRITICAL] NaN detected in total loss at iteration {i}")
-        #     tqdm.write(f"  img_loss: {img_loss.item():.6f}")
-        #     tqdm.write(f"  depth_loss_value: {depth_loss_value.item() if isinstance(depth_loss_value, torch.Tensor) else depth_loss_value:.6f}")
-        #     tqdm.write(f"  sigma_loss: {sigma_loss.item() if isinstance(sigma_loss, torch.Tensor) else sigma_loss:.6f}")
-        #     if args.i_embed==1 and 'TV_loss' in locals():
-        #         tqdm.write(f"  TV_loss: {TV_loss.item() if isinstance(TV_loss, torch.Tensor) else TV_loss:.6f}")
-        #     # Skip backward pass if loss is NaN to prevent training crash
-        #     tqdm.write(f"[CRITICAL] Skipping backward pass and optimizer step due to NaN loss")
-        #     continue
 
         loss.backward()
         # pdb.set_trace()
@@ -1194,11 +1287,11 @@ def train():
         if i%args.i_video==0 and i > 0:
             # Turn on testing mode
             with torch.no_grad():
-                rgbs, depths, disps = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, render_factor=args.render_factor)
-            tqdm.write(f"[VIDEO] Done, saving {rgbs.shape, depths.shape}")
+                rgbs, pred_depths, disps = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, render_factor=args.render_factor)
+            tqdm.write(f"[VIDEO] Done, saving {rgbs.shape, pred_depths.shape}")
             moviebase = os.path.join(basedir, expname, '{}_spiral_{:06d}_'.format(expname, i))
             imageio.mimwrite(moviebase + 'rgb.mp4', to8b(rgbs), fps=30, quality=8)
-            imageio.mimwrite(moviebase + 'depth.mp4', to8b(depths / np.max(depths)), fps=30, quality=8)
+            imageio.mimwrite(moviebase + 'depth.mp4', to8b(pred_depths / np.max(pred_depths)), fps=30, quality=8)
 
             # if args.use_viewdirs:
             #     render_kwargs_test['c2w_staticcam'] = render_poses[0][:3,:4]

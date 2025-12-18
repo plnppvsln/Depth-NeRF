@@ -18,6 +18,8 @@ lrate_decay = 10
 using_sparse = True
 no_ndc = True
 
-colmap_depth = True
-depth_loss = True
-depth_lambda = 0.1
+no_batching = True
+use_ddp = True
+save_depth_completion_dir = ./logs/ddp
+
+
