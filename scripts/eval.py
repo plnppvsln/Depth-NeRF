@@ -152,6 +152,18 @@ def main():
         required=True,
         help='Путь к папке с predicted изображениями'
     )
+    parser.add_argument(
+        '--output', '-o',
+        type=str,
+        default=None,
+        help='Путь к файлу для сохранения результатов (.txt)'
+    )
+    parser.add_argument(
+        '--expname', '-n',
+        type=str,
+        default=None,
+        help='Название эксперимента'
+    )
     
     args = parser.parse_args()
     
@@ -207,28 +219,38 @@ def main():
         return
     
     # Вывод результатов
-    print("\n" + "="*60)
-    print("РЕЗУЛЬТАТЫ ОЦЕНКИ")
-    print("="*60)
-    print(f"\nКоличество изображений: {len(psnr_values)}")
-    print("\nPSNR (dB) - чем выше, тем лучше ↑")
-    print(f"  Среднее: {np.mean(psnr_values):.4f}")
-    print(f"  Стандартное отклонение: {np.std(psnr_values):.4f}")
-    print(f"  Минимум: {np.min(psnr_values):.4f}")
-    print(f"  Максимум: {np.max(psnr_values):.4f}")
+    results_text = "\n" + "="*60 + "\n"
+    results_text += f"РЕЗУЛЬТАТЫ ОЦЕНКИ ЭКСПЕРИМЕНТА: {args.expname}\n"
+    results_text += "="*60 + "\n"
+    results_text += f"\nКоличество изображений: {len(psnr_values)}\n"
+    results_text += "\nPSNR (dB) - чем выше, тем лучше ↑\n"
+    results_text += f"  Среднее: {np.mean(psnr_values):.4f}\n"
+    results_text += f"  Стандартное отклонение: {np.std(psnr_values):.4f}\n"
+    results_text += f"  Минимум: {np.min(psnr_values):.4f}\n"
+    results_text += f"  Максимум: {np.max(psnr_values):.4f}\n"
+    results_text += "\nSSIM - чем выше, тем лучше ↑\n"
+    results_text += f"  Среднее: {np.mean(ssim_values):.4f}\n"
+    results_text += f"  Стандартное отклонение: {np.std(ssim_values):.4f}\n"
+    results_text += f"  Минимум: {np.min(ssim_values):.4f}\n"
+    results_text += f"  Максимум: {np.max(ssim_values):.4f}\n"
+    results_text += "\nLPIPS - чем ниже, тем лучше ↓\n"
+    results_text += f"  Среднее: {np.mean(lpips_values):.6f}\n"
+    results_text += f"  Стандартное отклонение: {np.std(lpips_values):.6f}\n"
+    results_text += f"  Минимум: {np.min(lpips_values):.6f}\n"
+    results_text += f"  Максимум: {np.max(lpips_values):.6f}\n"
+    results_text += "="*60 + "\n"
     
-    print("\nSSIM - чем выше, тем лучше ↑")
-    print(f"  Среднее: {np.mean(ssim_values):.4f}")
-    print(f"  Стандартное отклонение: {np.std(ssim_values):.4f}")
-    print(f"  Минимум: {np.min(ssim_values):.4f}")
-    print(f"  Максимум: {np.max(ssim_values):.4f}")
+    # Вывод в консоль
+    # print(results_text)
     
-    print("\nLPIPS - чем ниже, тем лучше ↓")
-    print(f"  Среднее: {np.mean(lpips_values):.6f}")
-    print(f"  Стандартное отклонение: {np.std(lpips_values):.6f}")
-    print(f"  Минимум: {np.min(lpips_values):.6f}")
-    print(f"  Максимум: {np.max(lpips_values):.6f}")
-    print("="*60)
+    # Сохранение в файл, если указан путь
+    if args.output:
+        try:
+            with open(args.output, 'w', encoding='utf-8') as f:
+                f.write(results_text)
+            print(f"Результаты сохранены в файл: {args.output}")
+        except Exception as e:
+            print(f"Ошибка при сохранении результатов в файл: {e}")
 
 
 if __name__ == "__main__":

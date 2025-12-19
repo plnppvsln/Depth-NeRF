@@ -1,5 +1,11 @@
-from llff.poses.pose_utils import gen_poses
 import sys
+from pathlib import Path
+import os
+
+# Добавляем корневую директорию проекта в sys.path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+from llff.poses.pose_utils import gen_poses
 
 import argparse
 parser = argparse.ArgumentParser()

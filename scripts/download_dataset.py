@@ -5,13 +5,13 @@ from tqdm import tqdm
 import zipfile
 
 DATASETS = {
-    "shaving_set": "https://huggingface.co/datasets/artyogan/nerf_project_datasets/resolve/main/shaving_set.zip",
-    "lego": "https://huggingface.co/datasets/artyogan/nerf_project_datasets/resolve/main/lego.zip",
+    # "shaving_set": "https://huggingface.co/datasets/artyogan/nerf_project_datasets/resolve/main/shaving_set.zip",
+    # "lego": "https://huggingface.co/datasets/artyogan/nerf_project_datasets/resolve/main/lego.zip",
     "fern": "https://huggingface.co/datasets/artyogan/nerf_project_datasets/resolve/main/fern.zip",
-    "fox": "https://huggingface.co/datasets/artyogan/nerf_project_datasets/resolve/main/fox.zip",
+    # "fox": "https://huggingface.co/datasets/artyogan/nerf_project_datasets/resolve/main/fox.zip",
     "cowork1": "https://huggingface.co/datasets/artyogan/nerf_project_datasets/resolve/main/cowork1.zip",
     "cowork2": "https://huggingface.co/datasets/artyogan/nerf_project_datasets/resolve/main/cowork2.zip",
-    "table": "https://huggingface.co/datasets/artyogan/nerf_project_datasets/resolve/main/table.zip",
+    # "table": "https://huggingface.co/datasets/artyogan/nerf_project_datasets/resolve/main/table.zip",
 }
 
 def download_file(url, dest):

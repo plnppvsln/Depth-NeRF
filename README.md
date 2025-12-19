@@ -25,7 +25,7 @@ We compare **two distinct depth integration strategies**, all implemented within
 
 #### 2. **DS-NeRF (Depth as Hard Supervision)**
 - **Idea**: Treats depth maps as **ground-truth supervision** during training.
-- **Implementation**: Adds an L1 loss between predicted depth (via expected termination point) and input depth map.
+- **Implementation**: Adds an L2 and KL divergence loss between predicted depth (via expected termination point) and input depth map.
 - **Assumption**: Input depth is reasonably accurate (e.g., from COLMAP).
 
 #### 3. **HashNeRF (Efficient Encoding + Implicit Depth)**
@@ -46,21 +46,43 @@ All methods share the same ray sampling, network architecture (except hash encod
 
 Below are the qualitative and quantitative results obtained on the our custom dataset with different input views.
 
-Results with 3 views for HashNeRF, DS-NeRF, SparseNeRF and DDP-NeRF(from left to right)
+Results on cowork2 dataset for HashNeRF, DS-NeRF, SparseNeRF and DDP-NeRF (from left to right)
 <div align="center">
-  <img src="results/cowork2_3v.gif" alt="3-view reconstruction comparison" width="100%" style="border:1px solid #ddd; border-radius:4px; padding:5px; margin:10px 0;">
-  <br>
-  <em>Comparison of different methods trained with only 3 input views</em>
-</div>
-<div align="center">
-  <img src="results/cowork9.gif" alt="3-view reconstruction comparison" width="100%" style="border:1px solid #ddd; border-radius:4px; padding:5px; margin:10px 0;">
+  <img src="results/cowork2_9v.gif" alt="3-view reconstruction comparison" width="100%" style="border:1px solid #ddd; border-radius:4px; padding:5px; margin:10px 0;">
   <br>
   <em>Comparison of different methods trained with 9 input views</em>
 </div>
+<div align="center">
+  <img src="results/cowork2_5v.gif" alt="3-view reconstruction comparison" width="100%" style="border:1px solid #ddd; border-radius:4px; padding:5px; margin:10px 0;">
+  <br>
+  <em>Comparison of different methods trained with 5 input views</em>
+</div>
+<div align="center">
+  <img src="results/cowork2_3v.gif" alt="3-view reconstruction comparison" width="100%" style="border:1px solid #ddd; border-radius:4px; padding:5px; margin:10px 0;">
+  <br>
+  <em>Comparison of different methods trained with 3 input views</em>
+</div>
+<div align="center">
+  <img src="results/cowork2_2v.gif" alt="3-view reconstruction comparison" width="100%" style="border:1px solid #ddd; border-radius:4px; padding:5px; margin:10px 0;">
+  <br>
+  <em>Comparison of different methods trained with 2 input views</em>
+</div>
+We also evaluated perfomance of all methods on other datasets - cowork1 and fern. 
+<div align="center">
+  <img src="results/cowork1_9v.gif" alt="3-view reconstruction comparison" width="100%" style="border:1px solid #ddd; border-radius:4px; padding:5px; margin:10px 0;">
+  <br>
+  <em>Comparison of different methods trained with 9 input views</em>
+</div>
+<div align="center">
+  <img src="results/fern_3v.gif" alt="3-view reconstruction comparison" width="100%" style="border:1px solid #ddd; border-radius:4px; padding:5px; margin:10px 0;">
+  <br>
+  <em>Comparison of different methods trained with 3 input views</em>
+</div>
 
-### Metrics
 
 ### Training took about 60 hours (calculated by Kaggle hours remained)
+
+### Metrics
 
 All results are evaluated on test views using standard metrics.
 
@@ -91,13 +113,13 @@ All results are evaluated on test views using standard metrics.
 ---
 
 ### Key Observations:
-- **SparseNeRF** achieves the best PSNR with 2 and 5 views, demonstrating excellent geometry recovery under extreme sparsity
-- **DDP-NeRF** shows strongest performance with 5 views (best PSNR and SSIM), benefiting from dense depth priors when sufficient input is available
-- **SparseNeRF** consistently achieves the lowest LPIPS scores across all view counts, indicating superior perceptual quality
+- All methods consistently improve with more views across all metrics
 - **HashNeRF** provides stable baseline performance that improves steadily with more input views
-- **DS-NeRF** shows competitive results with balanced performance across all metrics
+- **DS-NeRF** is the most robust method, delivering the best and most consistent PSNR/SSIM, especially in very sparse-view settings.
+- **SparseNeRF** struggles with very few views but scales well, becoming competitive once sufficient views are available
+- **DDP-NeRF** demonstrates strong sparse-view performance with balanced metrics, achieving the best perceptual quality (LPIPS) at higher view counts.
 
-> **Note**: All methods were evaluated on the same cowork2 scene with identical hyperparameters. Results represent mean values over multiple test views.
+> **Note**: All methods were evaluated on 3 scenes (cowork1, cowork2 and fern) with identical common hyperparameters. Results represent mean values over multiple test views.
 
 ---
 ## Project Structure
@@ -106,6 +128,7 @@ Depth-NeRF/
 │
 ├── README.md                              ← Full project documentation
 ├── render.sh                              ← Rendering script
+├── eval.sh                                ← Evaluation script
 ├── requirements.txt                       ← Python dependencies 
 ├── .gitignore                             ← Excludes logs, cache, weights, IDE files
 ├── train.sh                               ← Training script
@@ -113,19 +136,17 @@ Depth-NeRF/
 ├── run_nerf_helpers.py                    ← Helper functions for NeRF
 │
 ├── configs/                               ← Configuration files for all methods
-│   ├── fern_3v.txt                        
-│   ├── fern_3v_ds.txt                     
+│   ├── fern_3v.txt                        ← You can choose a scene and try different methods
+│   ├── cowork1_3v.txt                     
+│   ├── ddp.txt                            ← Or choose the method and try different scenes
 │   └── ....                  
 │
 ├── scripts/                               ← Utility & data preparation scripts
-│   ├── download_dataset.py                ← Downloads datasets (lego, fern, etc.)
+│   ├── download_dataset.py                ← Downloads datasets (fern, cowork1 etc.)
+│   ├── download_pretrained_logs.py        ← Downloads pretrained models for a method (ddp, dsnerf etc.)
 │   ├── imgs2poses.py                      ← Runs COLMAP to estimate camera poses
 │   ├── download_weights.py                ← Downloads DPT weights into ./weights/
-│   ├── compare_all_methods.py             ← Compares results from all methods
-│   ├── download_lego_dataset.sh           ← Helper script for LEGO dataset
-│   ├── eval.py                            ← Evaluation script
-│   ├── eval_metrics_script.py             ← Computes PSNR, SSIM, LPIPS metrics
-│   └── install_deps.py                    ← Installs system dependencies
+│   └── eval.py                            ← Evaluation script
 │
 ├── data/                                  ← EMPTY by default (datasets downloaded here)
 │   └── (populated after: python scripts/download_dataset.py --dataset fern)
@@ -142,16 +163,21 @@ Depth-NeRF/
 │
 ├── DPT/                                   ← [Kept as-is] DPT monocular depth model
 │   ├── dpt.py
-│   ├── transforms.py
+│   ├── setup.py
 │   └── ... (other DPT source files)
 │
-├── llff/                                  ← LLFF data loader & processing
+├── ddp/                                   ← [Kept as-is] Dense Depth Prior helpers
+│   ├── __init__.py
+│   ├── transforms.py
+│   └── ... (other ddp source files)
+│
+├── llff/                                  ← LLFF data processing
 │   ├── poses.py                           ← LLFF pose utilities
 │   └── ...                                ← Other LLFF utilities 
 │
 ├── load_dataset/                          ← Dataset loading logic
 │   ├── __init__.py
-│   ├── load_llff.py                       ← LLFF dataset loader
+│   ├── llff.py                            ← LLFF dataset loader
 │   └── data.py
 │
 ├── losses/                                ← Custom loss functions
@@ -161,13 +187,11 @@ Depth-NeRF/
 ├── utils/                                 ← Helper functions
 │   ├── ray_utils.py                       ← Ray sampling utilities
 │   ├── dpt_utils.py                       ← DPT integration utilities
-│   ├── camera_pose_visualizer.py          ← Camera pose visualization
-│   ├── hash_encoding.py                   ← Hash grid encoding
-│   ├── optimizer.py                       ← Custom optimizers
-│   └── radam.py                           ← RAdam optimizer implementation
+│   └── hash_encoding.py                   ← Hash grid encoding
 │
 └── weights/                               ← Pretrained model weights 
-    └── dpt_hybrid-midas-501f0c75.pt       ← Downloaded by scripts/download_weights.py
+    ├── dpt_hybrid-midas-501f0c75.pt       ← Downloaded by scripts/download_weights.py
+    └── ...
 ```
 
 ## Installation and Setup
@@ -221,16 +245,13 @@ python scripts/download_dataset.py --dataset <dataset_name>
 For example:
 
 ```bash
-python scripts/download_dataset.py --dataset lego
+python scripts/download_dataset.py --dataset cowork1
 python scripts/download_dataset.py --dataset fern
 ```
 
 #### Available Datasets
 
-- `shaving_set`
-- `lego`
 - `fern`
-- `fox`
 - `cowork1`
 - `cowork2`
 
@@ -251,10 +272,12 @@ For more information, run:
 python scripts/download_dataset.py --help
 ```
 2. **Download a Weight**
-Download weight:
+To run DDP NeRF & SparseNeRF you need to download weights of depth completion models.
+For SparseNeRF:
 ```bash
 python scripts/download_weights.py
 ```
+For DDP NeRF you need to download weights from [here](https://drive.google.com/drive/folders/1HTyigHPJKZKBWzGFoY8J2bcS-h8_SfX9?usp=sharing).
 
 3. **Running COLMAP**
 
@@ -279,7 +302,7 @@ For example:
 
 ```bash
 python scripts/imgs2poses.py data/nerf_llff_data/fern
-python scripts/imgs2poses.py data/nerf_custom/fox
+python scripts/imgs2poses.py data/nerf_llff_data/cowork1
 ```
 
 ### Directory Structure
@@ -332,29 +355,47 @@ The script will automatically skip COLMAP if the sparse reconstruction already e
 
 **Note:** COLMAP may not be able to register all images in your dataset (e.g., due to insufficient features, poor image quality, or lack of overlap). The pose processing pipeline has been updated to handle this gracefully by using only the images that were successfully registered by COLMAP. The `view_imgs.txt` file contains the list of images that were successfully processed, and the `poses_bounds.npy` file will only contain poses for these registered images. This prevents errors when some images are missing from the COLMAP reconstruction.
 
-3. **Train & Render Methods**:
+4. **Train & Render Methods**:
 
 **SparseNeRF:**
 ```bash
 python run_nerf.py --config configs/fern_3v.txt \
-  --use_dpt_ranking --no_batching --N_iters 1000 --lrate 0.01 \
-  --lrate_decay 10 --lambda_rank 0.2 --lambda_cont 0.02 \
-  --render_factor 8 --i_video 1000
+  --use_dpt_ranking --no_batching --lambda_rank 0.2 --lambda_cont 0.02 \
+  --finest_res 1024 --lrate 0.01 --lrate_decay 10 \
+  --render_factor 8 --i_video 1000 --N_iters 2000
 ```
 **DSNeRF:**
 ```bash
-python run_nerf.py --config configs/fern_3v_dsnerf.txt \
-  --finest_res 1024 --log2_hashmap_size 19 --lrate 0.01 \
-  --lrate_decay 10 --render_factor 8 --i_video 1000
+python run_nerf.py --config configs/fern_3v.txt \
+  --no_ndc --colmap_depth --depth_loss --depth_lambda = 0.1 \
+  --finest_res 1024 --lrate 0.01 --lrate_decay 10 \
+  --render_factor 8 --i_video 1000 --N_iters 2000
   ```
 **HashNeRF:**
 ```bash
 python run_nerf.py --config configs/fern_3v.txt \
-  --render_factor 8 --i_video 1000
+  --finest_res 1024 --lrate 0.01 --lrate_decay 10 \
+  --render_factor 8 --i_video 1000 --N_iters 2000
 ```
 **DDP-NeRF:**
 ```bash
-python run_nerf.py --config configs/fern_3v.txt --no_batching --use_dd
+python run_nerf.py --config configs/fern_3v.txt \
+  --no_batching --use_ddp --no_ndc \
+  --finest_res 1024 --lrate 0.01 --lrate_decay 10 \
+  --render_factor 8 --i_video 1000 --N_iters 2000
+```
+
+
+### **Downloading pretrained models with logs**:
+
+```bash
+python scripts/download_pretrained_logs.py --logs <nerf method name>
+```
+
+For exampla:
+```bash
+python scripts/download_pretrained_logs.py --logs ddp
+python scripts/download_pretrained_logs.py --logs hashnerf
 ```
 
 > Outputs (videos, depth maps, logs) are saved in logs/ by default. 

@@ -204,42 +204,42 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
             # Можно разные варианты сохранения изображений добавить
             # Здесь: первый одной картинкой сохраняет, второй - двумя разными
 
-            # save rgb and depth as a figure
-            fig = plt.figure(figsize=(25,15))
-            ax = fig.add_subplot(1, 2, 1)
-            rgb8 = to8b(rgbs[-1])
-            ax.imshow(rgb8)
-            ax.axis('off')
-            ax = fig.add_subplot(1, 2, 2)
-            ax.imshow(depths[-1], cmap='plasma', vmin=0, vmax=1)
-            ax.axis('off')
-            filename = os.path.join(savedir, '{:03d}.png'.format(i))
-            # save as png
-            plt.savefig(filename, bbox_inches='tight', pad_inches=0)
-            plt.close(fig)
-            # imageio.imwrite(filename, rgb8)
-
+            # # save rgb and depth as a figure
+            # fig = plt.figure(figsize=(25,15))
+            # ax = fig.add_subplot(1, 2, 1)
             # rgb8 = to8b(rgbs[-1])
-            # rgb8[np.isnan(rgb8)] = 0
+            # ax.imshow(rgb8)
+            # ax.axis('off')
+            # ax = fig.add_subplot(1, 2, 2)
+            # ax.imshow(depths[-1], cmap='plasma', vmin=0, vmax=1)
+            # ax.axis('off')
             # filename = os.path.join(savedir, '{:03d}.png'.format(i))
-            # imageio.imwrite(filename, rgb8)
-            # depth = depth.cpu().numpy()
-            # tqdm.write(f"max depth: {np.nanmax(depth)}")
-            # depth_valid = depth[~np.isnan(depth)]
-            # if len(depth_valid) > 0:
-            #     depth_min = np.nanmin(depth)
-            #     depth_max = np.nanmax(depth)
-            #     if depth_max > depth_min:
-            #         depth_normalized = (depth - near) / (far - near)
-            #     else:
-            #         depth_normalized = np.zeros_like(depth)
-            #     depth_normalized = np.clip(depth_normalized, 0, 1)
-            #     depth_normalized[np.isnan(depth_normalized)] = 0
-            #     depth8 = (255 * depth_normalized).astype(np.uint8)
-            # else:
-            #     depth8 = np.zeros_like(depth, dtype=np.uint8)
-            # imageio.imwrite(os.path.join(savedir, '{:03d}_depth.png'.format(i)), depth8)
-            # np.savez(os.path.join(savedir, '{:03d}.npz'.format(i)), rgb=rgb.cpu().numpy(), disp=disp.cpu().numpy(), acc=acc.cpu().numpy(), depth=depth)
+            # # save as png
+            # plt.savefig(filename, bbox_inches='tight', pad_inches=0)
+            # plt.close(fig)
+            # # imageio.imwrite(filename, rgb8)
+            
+            rgb8 = to8b(rgbs[-1])
+            rgb8[np.isnan(rgb8)] = 0
+            filename = os.path.join(savedir, '{:03d}.png'.format(i))
+            imageio.imwrite(filename, rgb8)
+            depth = depth.cpu().numpy()
+            tqdm.write(f"max depth: {np.nanmax(depth)}")
+            depth_valid = depth[~np.isnan(depth)]
+            if len(depth_valid) > 0:
+                depth_min = np.nanmin(depth)
+                depth_max = np.nanmax(depth)
+                if depth_max > depth_min:
+                    depth_normalized = (depth - near) / (far - near)
+                else:
+                    depth_normalized = np.zeros_like(depth)
+                depth_normalized = np.clip(depth_normalized, 0, 1)
+                depth_normalized[np.isnan(depth_normalized)] = 0
+                depth8 = (255 * depth_normalized).astype(np.uint8)
+            else:
+                depth8 = np.zeros_like(depth, dtype=np.uint8)
+            imageio.imwrite(os.path.join(savedir, '{:03d}_depth.png'.format(i)), depth8)
+            np.savez(os.path.join(savedir, '{:03d}.npz'.format(i)), rgb=rgb.cpu().numpy(), disp=disp.cpu().numpy(), acc=acc.cpu().numpy(), depth=depth)
 
 
 
@@ -697,7 +697,7 @@ def config_parser():
     parser.add_argument("--lambda_cont", type=float, default=0.02,
                         help="Weight for spatial continuity loss")
 
-    #SparseNerf paramenters parser
+    #DDPNerf paramenters parser
     parser.add_argument("--use_ddp", action='store_true',
                     help="Use DDP method for sampling")
     parser.add_argument("--ddp_depth_loss_weight", type=float, default=0.004,
@@ -707,6 +707,9 @@ def config_parser():
                             thresholds <=0 deactivate invalidation')
     parser.add_argument("--save_depth_completion_dir", type=str, default=None,
                         help='path to save ddp depth completion (None by default)')
+
+    parser.add_argument("--eval", action='store_true',
+                    help="Turns on evaluation mode (use only with --render_only)")
 
     return parser
 
@@ -748,13 +751,16 @@ def train():
         if args.using_sparse:
             print('using_sparse enabled: using all images for training (no test set)')
             i_test = []
-        
+
         # Преобразуем i_test в numpy array для консистентности
         i_test = np.array(i_test)
 
         i_val = i_test
         i_train = np.array([i for i in np.arange(int(images.shape[0])) if
                         (i not in i_test and i not in i_val)])
+
+        if args.eval:
+            i_test = i_train
 
     elif args.dataset_type == 'blender':
         images, poses, render_poses, hwf, i_split, bounding_box = load_blender_data(args.datadir, args.half_res, args.testskip)
@@ -923,6 +929,63 @@ def train():
             # disps[np.isnan(disps)] = 0
             print('Depth stats', np.mean(pred_depths), np.max(pred_depths), np.percentile(pred_depths, 95))
             imageio.mimwrite(os.path.join(testsavedir, 'depth.mp4'), to8b(pred_depths / np.percentile(pred_depths, 95)), fps=30, quality=8)
+
+            if args.eval:
+                import glob
+                img_dir = os.path.join(args.datadir, 'images_4')
+                if os.path.exists(img_dir):
+                    # Для LLFF датасета
+                    img_files = sorted(glob.glob(os.path.join(img_dir, '*.jpg')) + 
+                                        glob.glob(os.path.join(img_dir, '*.JPG')) +
+                                        glob.glob(os.path.join(img_dir, '*.png')) +
+                                        glob.glob(os.path.join(img_dir, '*.PNG')))
+                    img_names = [os.path.basename(f) for f in img_files]
+                else:
+                    # Если папка images не найдена, используем нумерацию
+                    img_names = [f'{i:03d}.png' for i in range(len(images))]
+                gt_dir = os.path.join(args.datadir, 'images_4')
+                os.makedirs(gt_dir, exist_ok=True)
+                for i, gt_img in enumerate(images):
+                    try:
+                        gt_img_np = gt_img.cpu().numpy() if hasattr(gt_img, 'cpu') else gt_img
+                        # Уменьшаем ground truth изображение с тем же render_factor
+                        if args.render_factor > 1:
+                            from skimage.transform import resize
+                            H_orig, W_orig = gt_img_np.shape[:2]
+                            H_new = H_orig // args.render_factor
+                            W_new = W_orig // args.render_factor
+                            gt_img_np = resize(gt_img_np, (H_new, W_new), order=5, anti_aliasing=True)
+                            # gt_img_np = torchvision.transforms.functional.resize(gt_img_np, (H_new, W_new), \
+                            # interpolation=torchvision.transforms.functional.InterpolationMode.NEAREST)
+                        imageio.imwrite(os.path.join(gt_dir, f'{i:03d}.png'), to8b(gt_img_np))
+                    except Exception as e:
+                        print(f"Warning: Could not save ground truth image {i}: {e}")
+                
+                # Run evaluation script
+                import subprocess
+                eval_cmd = [
+                    'python', 'scripts/eval.py',
+                    '--ground_truth', gt_dir,
+                    '--predicted', testsavedir,
+                    '-o', os.path.join(basedir, expname, 'metrics.txt'),
+                    '-n', expname
+                ]
+                print(f"Running evaluation: {' '.join(eval_cmd)}")
+                try:
+                    subprocess.run(eval_cmd, check=True)
+                except subprocess.CalledProcessError as e:
+                    print(f"Evaluation failed: {e}")
+                
+                # Удаляем predicted изображения из основной папки (только файлы 000.png, 001.png, etc.)
+                try:
+                    for f in os.listdir(gt_dir):
+                        if f.endswith('.png') and f[:-4].isdigit() and len(f[:-4]) == 3:
+                            # Это файл вида 000.png, 001.png, etc.
+                            os.remove(os.path.join(gt_dir, f))
+                    print(f"Cleaned up predicted images from: {gt_dir}")
+                except Exception as e:
+                    print(f"Warning: Could not remove predicted images from {gt_dir}: {e}")
+
 
             return
     
